@@ -1,4 +1,24 @@
+# Dependencies
 node_modules/
+
+# Environment and secrets (keep the template)
 .env
+.env.*
+!.env.example
+
+# Build output
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Logs and runtime data (audit log is generated per run)
+*.log
 *.jsonl
+npm-debug.log*
+
+# Local editor / OS / tool settings
 .DS_Store
+.vscode/
+.idea/
+.claude/settings.local.json
