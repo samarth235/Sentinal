@@ -1,0 +1,8 @@
+[
+  { "id": "C001", "name": "Aarav Testwala", "email": "aarav.testwala@example.test", "city": "Bengaluru", "plan": "pro", "signup_date": "2025-03-14", "pan": "ABCPE1234F", "phone": "9800000001", "account_number": "000111222301", "account_status": "active" },
+  { "id": "C002", "name": "Meera Fictiona", "email": "meera.fictiona@example.test", "city": "Mysuru", "plan": "basic", "signup_date": "2025-05-02", "pan": "BCDPF2345G", "phone": "9800000002", "account_number": "000111222302", "account_status": "active" },
+  { "id": "C003", "name": "Rohan Sampleton", "email": "rohan.sampleton@example.test", "city": "Bengaluru", "plan": "enterprise", "signup_date": "2024-11-20", "pan": "CDEPG3456H", "phone": "9800000003", "account_number": "000111222303", "account_status": "suspended" },
+  { "id": "C004", "name": "Isha Placeholder", "email": "isha.placeholder@example.test", "city": "Hubballi", "plan": "pro", "signup_date": "2025-07-09", "pan": "DEFPH4567J", "phone": "9800000004", "account_number": "000111222304", "account_status": "active" },
+  { "id": "C005", "name": "Kabir Mockrao", "email": "kabir.mockrao@example.test", "city": "Mangaluru", "plan": "basic", "signup_date": "2025-01-28", "pan": "EFGPJ5678K", "phone": "9800000005", "account_number": "000111222305", "account_status": "closed" },
+  { "id": "C006", "name": "Tara Dummyvarma", "email": "tara.dummyvarma@example.test", "city": "Mysuru", "plan": "enterprise", "signup_date": "2025-09-15", "pan": "FGHPK6789L", "phone": "9800000006", "account_number": "000111222306", "account_status": "active" }
+]

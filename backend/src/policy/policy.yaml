@@ -1,0 +1,43 @@
+version: 1
+
+defaults:
+  fail_mode: closed                 # any error or unknown => DENY
+  approval_timeout_seconds: 60
+  guard_threshold: 0.7
+
+trusted_email_domains:
+  - company.test
+
+sensitive:
+  fields: [pan, phone, account_number]
+  patterns:
+    pan: "[A-Z]{5}[0-9]{4}[A-Z]"
+    phone: "(?:\\+91[- ]?)?[6-9][0-9]{9}"
+
+tools:
+  browse_url:
+    impact: low
+    provenance_args: []
+    egress_args: [url]              # data must not leak via URL params
+  query_db:
+    impact: medium
+    provenance_args: []
+  send_email:
+    impact: high
+    provenance_args: [to]
+    egress_args: [subject, body]
+    recipient_arg: to
+  send_payment:
+    impact: critical
+    provenance_args: [payee, amount_inr]
+    egress_args: [note]
+
+profiles:
+  research_assistant:
+    allowed_tools: [browse_url, query_db, send_email]
+    query_db:
+      allowed_fields: [name, city, plan, signup_date, email]
+  finance_assistant:
+    allowed_tools: [query_db, send_payment]
+    query_db:
+      allowed_fields: [name, plan, account_status]
