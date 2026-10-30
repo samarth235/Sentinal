@@ -6,7 +6,10 @@ import { runLive } from "./agent/agentLoop.js";
 import { runScripted } from "./agent/scriptedRun.js";
 import { evaluate } from "./gateway/policyEngine.js";
 import { safeClassify, NOT_CONSULTED } from "./integrations/guard.js";
-import { httpApprovals, providers } from "./integrations/index.js";
+import { auditChain, bus, httpApprovals, providers } from "./integrations/index.js";
+import { attachSocketBridge } from "./integrations/socketBridge.js";
+import { startTelegramBot } from "./integrations/telegramBot.js";
+import { auditRoutes } from "./routes/audit.js";
 import { initPolicy, reloadPolicy, PolicyError } from "./policy/loader.js";
 import { allDecisions, clearRuns, createRun, findDecision, getRun, summarize } from "./runs.js";
 import { getScenario, scenarios } from "./scenarios.js";
@@ -21,7 +24,8 @@ try {
 }
 
 export const app = express();
-app.use(cors({ origin: config.corsOrigin }));
+let bridge: ReturnType<typeof attachSocketBridge> | undefined;
+app.use(cors({ origin: config.frontendOrigins }));
 app.use(express.json({ limit: "1mb" }));
 
 const RunBody = z.object({ scenario_id: z.string(), shield: z.boolean(), mode: z.enum(["live", "scripted"]).default("scripted") });
@@ -83,6 +87,7 @@ app.post("/api/reset", (_req, res) => {
   httpApprovals.rejectAll();
   reset();
   clearRuns();
+  bridge?.clear();
   res.json({ ok: true });
 });
 
@@ -107,11 +112,34 @@ app.post("/api/replay/:decision_id", async (req, res) => {
   res.json(decision);
 });
 
+app.use(
+  auditRoutes(() => auditChain, {
+    tamperDemo: config.enableTamperDemo,
+    approvalTimeoutSeconds: config.approvalTimeoutSeconds,
+    guardProvider: providers.guard.constructor.name,
+    telegram: Boolean(config.telegramBotToken && config.telegramAllowedChatId),
+  }),
+);
+
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   console.error("[sentinel] request error:", err);
   res.status(500).json({ error: "internal error" });
 });
 
-app.listen(config.port, () => {
+const server = app.listen(config.port, () => {
   console.log(`[sentinel] gateway API listening on http://localhost:${config.port}`);
 });
+bridge = attachSocketBridge(server, bus, config.frontendOrigins);
+
+if (config.telegramBotToken && config.telegramAllowedChatId) {
+  startTelegramBot({
+    token: config.telegramBotToken,
+    allowedChatId: config.telegramAllowedChatId,
+    timeoutSeconds: config.approvalTimeoutSeconds,
+    bus,
+    resolve: (id, approve, approver) => httpApprovals.resolve(id, approve, approver),
+    pending: () => httpApprovals.list(),
+  });
+} else {
+  console.warn("[sentinel] TELEGRAM_BOT_TOKEN/TELEGRAM_ALLOWED_CHAT_ID not set — approvals via dashboard/API only");
+}

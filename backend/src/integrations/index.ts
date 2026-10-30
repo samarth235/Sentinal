@@ -1,8 +1,11 @@
 import { config } from "../config.js";
 import { HttpApprovalProvider, type ApprovalProvider } from "./approvals.js";
-import { JsonlAuditSink, type AuditSink } from "./audit.js";
+import type { AuditSink } from "./audit.js";
 import { bus } from "./bus.js";
 import { HeuristicGuard, type GuardProvider } from "./guard.js";
+import { GroqGuard } from "./groqGuard.js";
+import { HashChainAuditSink, MemoryChainStore } from "./hashChain.js";
+import { createPostgresAudit } from "./postgresAudit.js";
 
 export interface Providers {
   guard: GuardProvider;
@@ -10,14 +13,31 @@ export interface Providers {
   audit: AuditSink;
 }
 
-/** The HTTP approval queue backs POST /api/approvals and GET /api/pending-approvals. */
+/** The HTTP approval queue backs POST /api/approvals, the dashboard and the Telegram bot. */
 export const httpApprovals = new HttpApprovalProvider(() => config.approvalTimeoutSeconds);
 
-/** Swap implementations here (Person B: Groq guard, Telegram approvals, Postgres audit). */
+function chooseGuard(): GuardProvider {
+  if (config.groqApiKey && config.groqModel) {
+    return new GroqGuard({ apiKey: config.groqApiKey, model: config.groqModel, timeoutMs: config.guardTimeoutMs });
+  }
+  if (!process.env.VITEST) console.warn("[sentinel] GROQ_API_KEY/GROQ_MODEL not set — using heuristic guard stub");
+  return new HeuristicGuard();
+}
+
+function chooseAudit(): HashChainAuditSink {
+  if (config.databaseUrl) return createPostgresAudit(config.databaseUrl);
+  if (!process.env.VITEST) console.warn("[sentinel] DATABASE_URL not set — audit chain kept in memory and mirrored to audit.jsonl");
+  return new HashChainAuditSink(new MemoryChainStore(process.env.VITEST ? null : config.auditPath));
+}
+
+/** Hash-chained audit log (Postgres when configured, in-memory otherwise). Backs /api/audit/*. */
+export const auditChain = chooseAudit();
+
+/** Swap implementations here. */
 export const providers: Providers = {
-  guard: new HeuristicGuard(),
+  guard: chooseGuard(),
   approvals: httpApprovals,
-  audit: new JsonlAuditSink(process.env.VITEST ? null : config.auditPath),
+  audit: auditChain,
 };
 
 bus.useAudit(() => providers.audit);
