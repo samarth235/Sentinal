@@ -1,7 +1,7 @@
 import { nanoid } from "nanoid";
 import type { ArgProvenance, Decision, Evidence, GuardSignal, Impact, Reason, ToolCall, Verdict } from "../types.js";
 import type { Policy, ToolPolicy } from "../policy/loader.js";
-import { isKnownTool, toolSchemas } from "../tools/registry.js";
+import { hasArgSchema, validateArgs } from "../tools/registry.js";
 import type { ContextLedger } from "./contextLedger.js";
 import { computeProvenance, describeLocation } from "./provenance.js";
 import { containsSensitive } from "./sensitive.js";
@@ -50,7 +50,7 @@ function sourceLabel(ctx: RuleContext, ev: Evidence): string {
   const seg = ctx.ledger.get(ev.segment_id);
   const where = seg ? describeLocation(seg.text, ev.start) : "untrusted content";
   const label = ctx.ledger.labels.get(ev.segment_id) ?? (seg?.tool ? `the ${seg.tool} result` : "untrusted content");
-  return `${where} on ${label}`;
+  return label === "inbox" ? `${where} in an email in the inbox` : `${where} on ${label}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -62,7 +62,7 @@ const R1_toolNotPermitted: Rule = {
   check: ({ call, policy, toolPolicy }) => {
     const profile = policy.profiles[call.profile];
     if (!profile) return deny("TOOL_NOT_PERMITTED", `Unknown agent profile "${call.profile}"; no tools are permitted.`);
-    if (!toolPolicy || !isKnownTool(call.tool))
+    if (!toolPolicy || !hasArgSchema(call.tool, policy))
       return deny("TOOL_NOT_PERMITTED", `Tool ${call.tool} has no policy entry, so it is not permitted.`);
     if (!profile.allowed_tools.includes(call.tool))
       return deny("TOOL_NOT_PERMITTED", `The ${call.profile} profile is not permitted to use ${call.tool}.`);
@@ -72,12 +72,10 @@ const R1_toolNotPermitted: Rule = {
 
 const R2_invalidArgs: Rule = {
   id: "R2",
-  check: ({ call }) => {
-    if (!isKnownTool(call.tool)) return deny("INVALID_ARGS", `No argument schema for ${call.tool}.`);
-    const parsed = toolSchemas[call.tool].safeParse(call.args);
-    if (parsed.success) return null;
-    const issues = parsed.error.issues.map((i) => `${i.path.join(".") || "(args)"}: ${i.message}`).join("; ");
-    return deny("INVALID_ARGS", `Arguments for ${call.tool} are invalid (${issues}).`);
+  check: ({ call, policy }) => {
+    const result = validateArgs(call.tool, call.args, policy);
+    if (result.ok) return null;
+    return deny("INVALID_ARGS", `Arguments for ${call.tool} are invalid (${result.issues}).`);
   },
 };
 
@@ -205,6 +203,7 @@ export function evaluate(call: ToolCall, ledger: ContextLedger, policy: Policy, 
     shield: true,
     latency_ms: 0,
     decided_at: new Date().toISOString(),
+    policy_version: policy?.policy_version,
   };
 
   try {

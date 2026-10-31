@@ -1,15 +1,19 @@
 # Sentinel
 
-Sentinel is a policy-enforcement gateway between an AI agent and its tools.It intercepts every tool call, traces each high-impact argument back to either the user's request or untrusted
-content the agent read, and decides **ALLOW / DENY / REQUIRE_APPROVAL** with plain-English reasons and evidence spans.
-
-All data is synthetic. Nothing is really emailed or paid; every domain uses `.test`.
+Sentinel is a policy-enforcement gateway between AI agents and their tools. It intercepts every tool call, traces each
+high-impact argument back to either the user's request or untrusted content the agent read (a web page, an email), and
+decides **ALLOW / DENY / REQUIRE_APPROVAL** with plain-English reasons and evidence spans. Approvals go to Telegram or
+the dashboard; every event lands in a SHA-256 hash-chained audit log.
 
 ```
-backend/   gateway, policy engine, agent loop, REST API, integrations (Node + TypeScript)
+backend/   gateway, policy engine, REST + agent API, Telegram bot, audit chain (Node + TypeScript)
 frontend/  live dashboard (React + Vite + Tailwind + React Flow)
-docs/      demo script, slides outline, claims to verify
+sdk/       @sentinel-gateway/sdk: wrap any agent's tools in three lines (zero dependencies)
+docs/      deploy guide, demo script, slides outline, claims to verify
 ```
+
+The demo data is synthetic: the built-in tools write to a simulated outbox and ledger, and every demo domain uses `.test`.
+Real agents bring their own tools through the SDK; Sentinel decides, the agent's process executes.
 
 ## Run locally (no external services needed)
 
@@ -18,47 +22,64 @@ cd backend && cp .env.example .env && npm install && npm run dev     # http://lo
 cd frontend && cp .env.example .env && npm install && npm run dev    # http://localhost:5173
 ```
 
-With no keys set, the backend uses the heuristic guard, an in-memory hash-chained audit log (mirrored to
-`audit.jsonl`) and dashboard-only approvals, so the full demo still works.
+With no keys set, the backend uses the heuristic guard, an in-memory hash chain mirrored to `audit.jsonl`, and
+dashboard approvals, so the full demo works offline. Tests: `cd backend && npm test` (set `TEST_DATABASE_URL` to also
+run the audit chain against a real Postgres).
 
-Tests: `cd backend && npm test`. Set `TEST_DATABASE_URL` to also run the audit-chain test against a real Postgres.
+## Protect your own agent
 
-## Integrations (each one falls back to a stub when unset)
+```ts
+import { SentinelClient } from "@sentinel-gateway/sdk";
 
-| Env var(s) | Turns on | Fallback |
-|---|---|---|
-| `ANTHROPIC_API_KEY` | live mode (Claude tool-use loop) | scripted mode only |
-| `GROQ_API_KEY` + `GROQ_MODEL` | Groq guard classifier (can only escalate, fails closed) | heuristic regex guard |
-| `DATABASE_URL` | hash-chained audit log in Postgres (migrates on first use) | in-memory chain + `audit.jsonl` |
-| `TELEGRAM_BOT_TOKEN` + `TELEGRAM_ALLOWED_CHAT_ID` | Telegram approvals (only that chat may answer) | dashboard Approve/Reject |
-| `TELEGRAM_ALLOWED_USER_IDS` | restrict approvers to these Telegram user ids (use when the chat is a group) | any member of the allowed chat |
-| `API_TOKEN` | bearer token required on every `POST /api/*` (runs, approvals, reset, replay, tamper) | open (local demo only; the server refuses to start with `NODE_ENV=production` and no token) |
-| `ENABLE_TAMPER_DEMO=true` | `POST /api/audit/tamper-demo` | disabled (never enable in production) |
-| `FRONTEND_ORIGIN` | CORS + Socket.io origin | `http://localhost:5173` |
+const sentinel = new SentinelClient({ baseUrl: process.env.SENTINEL_URL!, apiKey: process.env.SENTINEL_AGENT_KEY! });
+const session = await sentinel.startSession({ profile: "research_assistant", userPrompt });
+const tools = session.wrap({ browse_url: fetchPage, send_email: sendEmail }); // your real functions
+```
 
-PANs, phone numbers and account numbers are masked (length-preserving) before they reach the audit log,
-the socket stream, Telegram or any REST response.
+Any language can use the REST API directly; see [`sdk/README.md`](sdk/README.md). Add tools without code changes by
+giving them an entry (impact, `args_schema`, `result_trust`) in `backend/src/policy/policy.yaml`.
 
-All `POST /api/*` routes require `Content-Type: application/json`, so another website cannot trigger them with a
-plain form. Dashboard approvals are recorded as `dashboard` or `dashboard:<name>`; the server sets that prefix, so a
-client cannot pose as a Telegram approver. Without `DATABASE_URL`, the chain is reloaded from `audit.jsonl` on start;
-a file that fails verification is moved to `audit.jsonl.invalid-<timestamp>` and a new chain begins.
+## What's in the box
 
-## Added API (on top of `backend/README.md`)
-
-| Method | Path | |
-|---|---|---|
-| GET | `/api/audit?run_id=` | `{ store, rows }`, chain rows |
-| GET | `/api/audit/verify` | `{ valid: true, rows }` or `{ valid: false, broken_at, expected, found }` |
-| POST | `/api/audit/tamper-demo` | `{ tampered_seq }` (only with `ENABLE_TAMPER_DEMO=true`) |
-| POST | `/api/audit/tamper-demo/restore` | `{ restored: number[] }`, undoes this process's tamper edits (rehearsals) |
-| GET | `/api/ui-config` | audit store, tamper flag, approval timeout, guard, telegram, `auth_required` |
-| WS | Socket.io | `sentinel:event` per `BusEvent`; `sentinel:snapshot` (last 500) on connect |
+| Area | What it does |
+|---|---|
+| Policy engine | Deterministic rules R0–R10, first DENY wins, fails closed on any error. Policy hash recorded on every decision. |
+| Provenance + taint | Recipient/payee/amount must come from the user, not from content the agent read; evidence points at the hidden sentence. |
+| Guard | Groq classifier as a second opinion (can only escalate). Heuristic fallback, refused in production unless allowed. |
+| Agent API (`/api/v1`) | Sessions, context, tool-call checks (wait or poll for approval), result reporting, per-agent keys. |
+| Human in the loop | Telegram Approve/Reject, DENY alerts, `/status` `/pending` `/verify` `/replay` `/trace` `/override`, retries, webhook mode. |
+| Audit | Hash chain in Postgres (advisory-locked) or JSONL; scheduled verification, truncation detection, head anchors posted to Telegram, append-only DB role script. |
+| Forensics | "Every action influenced by this page/email" (`/api/forensics`, dashboard **Trace**, Telegram `/trace`). |
+| Privacy | PAN, phone, Aadhaar, Luhn-valid cards, account numbers and API keys masked before the log, socket, Telegram or any response. |
+| Hardening | Token auth on every route and the socket, named operator tokens, rate limiting, helmet, readiness probe, graceful shutdown (pending approvals time out, audited), dangling approvals closed on restart. |
 
 ## Deploy
 
-- **Backend → Railway:** root `backend/`, start `npm run start`. Set the env vars above, including `NODE_ENV=production`
-  and a long random `API_TOKEN` (enter it in the dashboard's "Set token" box). Postgres from Neon/Supabase.
-  The Telegram bot uses long polling in the same process.
-- **Frontend → Vercel:** root `frontend/`, build `npm run build`, output `dist/`. Set `VITE_API_URL` to the Railway URL,
-  and set `FRONTEND_ORIGIN` on the backend to the Vercel URL.
+Step-by-step (Neon + Railway + Vercel + Telegram + Groq): **[docs/DEPLOY.md](docs/DEPLOY.md)**.
+Self-hosted: `cp docker.env.example .env && docker compose up -d --build`.
+
+## Configuration
+
+All settings are documented in [`backend/.env.example`](backend/.env.example). Production (`NODE_ENV=production`)
+refuses to start without a 24+ character `API_TOKEN`, with the tamper demo on outside a demo deployment, or with the
+regex guard unless `ALLOW_HEURISTIC_GUARD=true`. Demo features (scenarios, shield OFF, reset) are off in production
+unless `ENABLE_DEMO_FEATURES=true`.
+
+## API
+
+| Method | Path | |
+|---|---|---|
+| GET | `/api/health`, `/api/ready` | liveness; readiness (audit store reachable) |
+| GET | `/api/ui-config` | dashboard bootstrap (no secrets) |
+| GET | `/api/scenarios` · POST `/api/runs` · GET `/api/runs/:id` | demo scenarios (`user_prompt` for a custom live task) |
+| GET | `/api/decisions?run_id=` · `/api/history` | decisions (memory, then the audit log) |
+| GET | `/api/sessions` | agent sessions |
+| POST | `/api/approvals/:decision_id` | `{ approve }` — approver is the operator token's name |
+| GET | `/api/pending-approvals` · `/api/outbox` · `/api/ledger` | |
+| POST | `/api/replay/:decision_id` | re-evaluate against the current policy (works after restarts) |
+| GET | `/api/forensics?q=` · `/api/metrics` | forensics; latency p50/p95, verdict counts, guard health |
+| GET / POST | `/api/policy` · `/api/policy/reload` | current policy + overrides; hot reload (invalid file keeps the old one) |
+| GET | `/api/audit` · `/api/audit/verify` · `/api/audit/head` | chain rows, verification, head hash |
+| POST | `/api/reset`, `/api/audit/tamper-demo(/restore)` | demo only |
+| * | `/api/v1/...` | agent API, see `sdk/README.md` |
+| WS | Socket.io (`auth: { token }`) | `sentinel:event` per event; `sentinel:snapshot` (last 500) on connect |

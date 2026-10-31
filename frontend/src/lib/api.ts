@@ -1,4 +1,4 @@
-import type { AuditRow, Decision, LedgerPayment, OutboxEmail, RunSummary, ScenarioInfo, UiConfig, VerifyResult } from "./types";
+import type { AuditRow, Decision, ForensicsHit, LedgerPayment, OutboxEmail, RunSummary, ScenarioInfo, UiConfig, VerifyResult } from "./types";
 
 export const API_URL = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, "") ?? "http://localhost:4000";
 
@@ -22,6 +22,13 @@ export function setToken(token: string) {
   }
 }
 
+const unauthorizedListeners = new Set<() => void>();
+/** Called when the API rejects the stored token (the dashboard shows the sign-in screen). */
+export function onUnauthorized(fn: () => void): () => void {
+  unauthorizedListeners.add(fn);
+  return () => unauthorizedListeners.delete(fn);
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getToken();
   const res = await fetch(`${API_URL}${path}`, {
@@ -29,6 +36,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}), ...(init?.headers ?? {}) },
   });
   const body = await res.json().catch(() => ({}));
+  if (res.status === 401) unauthorizedListeners.forEach((fn) => fn());
   if (!res.ok) throw new Error((body as { error?: string }).error ?? `${res.status} ${res.statusText}`);
   return body as T;
 }
@@ -36,8 +44,9 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   scenarios: () => req<ScenarioInfo[]>("/api/scenarios"),
   uiConfig: () => req<UiConfig>("/api/ui-config"),
-  startRun: (scenario_id: string, shield: boolean, mode: "live" | "scripted") =>
-    req<{ run_id: string }>("/api/runs", { method: "POST", body: JSON.stringify({ scenario_id, shield, mode }) }),
+  startRun: (scenario_id: string, shield: boolean, mode: "live" | "scripted", user_prompt?: string) =>
+    req<{ run_id: string }>("/api/runs", { method: "POST", body: JSON.stringify({ scenario_id, shield, mode, ...(user_prompt ? { user_prompt } : {}) }) }),
+  forensics: (q: string) => req<ForensicsHit[]>(`/api/forensics?q=${encodeURIComponent(q)}`),
   run: (id: string) => req<RunSummary>(`/api/runs/${id}`),
   approve: (decisionId: string, approve: boolean) =>
     req<{ ok: true }>(`/api/approvals/${decisionId}`, { method: "POST", body: JSON.stringify({ approve }) }),

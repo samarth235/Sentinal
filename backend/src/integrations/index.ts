@@ -6,6 +6,7 @@ import { HeuristicGuard, type GuardProvider } from "./guard.js";
 import { GroqGuard } from "./groqGuard.js";
 import { HashChainAuditSink, MemoryChainStore } from "./hashChain.js";
 import { createPostgresAudit } from "./postgresAudit.js";
+import { getPolicy } from "../policy/loader.js";
 
 export interface Providers {
   guard: GuardProvider;
@@ -13,14 +14,24 @@ export interface Providers {
   audit: AuditSink;
 }
 
+/** APPROVAL_TIMEOUT_SECONDS if set, otherwise the policy's defaults.approval_timeout_seconds. */
+export function approvalTimeoutSeconds(): number {
+  if (config.approvalTimeoutOverride && config.approvalTimeoutOverride > 0) return config.approvalTimeoutOverride;
+  try {
+    return getPolicy().defaults.approval_timeout_seconds;
+  } catch {
+    return 60;
+  }
+}
+
 /** The HTTP approval queue backs POST /api/approvals, the dashboard and the Telegram bot. */
-export const httpApprovals = new HttpApprovalProvider(() => config.approvalTimeoutSeconds);
+export const httpApprovals = new HttpApprovalProvider(approvalTimeoutSeconds);
 
 function chooseGuard(): GuardProvider {
   if (config.groqApiKey && config.groqModel) {
     return new GroqGuard({ apiKey: config.groqApiKey, model: config.groqModel, timeoutMs: config.guardTimeoutMs });
   }
-  if (!process.env.VITEST) console.warn("[sentinel] GROQ_API_KEY/GROQ_MODEL not set — using heuristic guard stub");
+  if (!process.env.VITEST) console.warn("[sentinel] GROQ_API_KEY/GROQ_MODEL not set — using heuristic regex guard");
   return new HeuristicGuard();
 }
 

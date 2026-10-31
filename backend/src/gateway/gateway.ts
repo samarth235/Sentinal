@@ -1,13 +1,17 @@
 import { nanoid } from "nanoid";
-import type { Decision, ToolCall } from "../types.js";
+import type { Decision, ToolCall, Trust } from "../types.js";
+import { config } from "../config.js";
 import { getPolicy, type Policy } from "../policy/loader.js";
-import { isKnownTool, resultTrust } from "../tools/registry.js";
-import { mockTools } from "../tools/mockTools.js";
+import { trustFor } from "../tools/registry.js";
+import { browseReal, isFixtureUrl, mockTools, type ToolResult } from "../tools/mockTools.js";
 import { bus as defaultBus, providers as defaultProviders, type Providers } from "../integrations/index.js";
 import type { SentinelBus } from "../integrations/bus.js";
 import { NOT_CONSULTED, safeClassify } from "../integrations/guard.js";
 import type { ContextLedger } from "./contextLedger.js";
 import { engineError, evaluate } from "./policyEngine.js";
+
+/** Runs a tool for real. Return the text the agent sees, plus structured rows for INTERNAL_DATA tools. */
+export type ToolExecutor = (call: ToolCall) => Promise<ToolResult> | ToolResult;
 
 export interface GatewayContext {
   run_id: string;
@@ -18,6 +22,13 @@ export interface GatewayContext {
   policy?: Policy;
   providers?: Providers;
   bus?: SentinelBus;
+  /** How allowed calls run. Defaults to the built-in mock tools (demo). */
+  executor?: ToolExecutor;
+  /**
+   * Remote agents run tools on their own side: Sentinel decides, the caller executes and then
+   * reports the result with recordToolResult(). When true, nothing runs inside the gateway.
+   */
+  deferExecution?: boolean;
   /** Called for every decision (store it for the API / replay). */
   onDecision?: (decision: Decision, ledgerSize: number) => void;
   /** Called with the raw result text of every tool that actually ran. */
@@ -25,10 +36,12 @@ export interface GatewayContext {
 }
 
 export interface GatewayResult {
-  /** What goes back to the agent as the tool_result. */
+  /** What goes back to the agent as the tool_result (a BLOCKED message when not executed). */
   result: string;
   decision: Decision;
   executed: boolean;
+  /** True when the call was allowed or approved (with deferExecution, the caller may now run it). */
+  authorized: boolean;
 }
 
 export const BLOCKED_PREFIX = "BLOCKED_BY_SENTINEL";
@@ -45,7 +58,8 @@ export function buildToolCall(ctx: Pick<GatewayContext, "run_id" | "session_id" 
   };
 }
 
-function labelFor(tool: string, args: Record<string, unknown>): string | undefined {
+export function labelFor(tool: string, args: Record<string, unknown>): string | undefined {
+  if (tool === "read_email") return "inbox";
   if (tool !== "browse_url" || typeof args.url !== "string") return undefined;
   try {
     const u = new URL(args.url);
@@ -55,12 +69,26 @@ function labelFor(tool: string, args: Record<string, unknown>): string | undefin
   }
 }
 
-/** Run the mock tool and record its output in the context ledger. */
-function execute(call: ToolCall, ctx: GatewayContext): string {
-  if (!isKnownTool(call.tool)) throw new Error(`no implementation for ${call.tool}`);
-  const out = mockTools[call.tool](call.args, call.run_id);
-  ctx.ledger.addToolResult(call.tool, resultTrust[call.tool], out.text, { label: labelFor(call.tool, call.args), records: out.records });
-  return out.text;
+export const mockExecutor: ToolExecutor = (call) => {
+  if (call.tool === "browse_url" && config.enableRealBrowse && typeof call.args.url === "string" && !isFixtureUrl(call.args.url)) {
+    return browseReal(call.args.url);
+  }
+  const impl = mockTools[call.tool];
+  if (!impl) throw new Error(`no implementation for ${call.tool}`);
+  return impl(call.args, call.run_id);
+};
+
+/** Put a tool's output into the context ledger with the trust level the policy gives that tool. */
+export function recordToolResult(ctx: GatewayContext, call: Pick<ToolCall, "tool" | "args">, out: ToolResult, trustOverride?: Trust) {
+  const trust = trustOverride ?? trustFor(call.tool, ctx.policy ?? safePolicy());
+  ctx.ledger.addToolResult(call.tool, trust, out.text, { label: out.label ?? labelFor(call.tool, call.args), records: out.records });
+}
+
+async function execute(call: ToolCall, ctx: GatewayContext): Promise<string> {
+  const out = await (ctx.executor ?? mockExecutor)(call);
+  const text = typeof out?.text === "string" ? out.text : JSON.stringify(out ?? "");
+  recordToolResult(ctx, call, { ...out, text });
+  return text;
 }
 
 const preview = (s: string) => (s.length > 300 ? `${s.slice(0, 300)}…` : s);
@@ -92,18 +120,22 @@ export async function handleToolCall(call: ToolCall, ctx: GatewayContext): Promi
       decided_at: new Date().toISOString(),
     };
     ctx.onDecision?.(decision, ctx.ledger.segments.length);
+    decision.outcome = "UNPROTECTED_EXECUTED";
+    if (ctx.deferExecution) {
+      await bus.publishSafe({ type: "decision.made", run_id: ctx.run_id, decision });
+      return { result: "", decision, executed: false, authorized: true };
+    }
     let text: string;
     try {
-      text = execute(call, ctx);
+      text = await execute(call, ctx);
     } catch (err) {
       text = `Tool error: ${(err as Error).message}`;
     }
-    decision.outcome = "UNPROTECTED_EXECUTED";
     decision.latency_ms = round(performance.now() - t0);
     ctx.onExecuted?.(decision, text);
     await bus.publishSafe({ type: "decision.made", run_id: ctx.run_id, decision });
     await bus.publishSafe({ type: "tool.executed", run_id: ctx.run_id, decision_id: decision.decision_id, result_preview: preview(text) });
-    return { result: text, decision, executed: true };
+    return { result: text, decision, executed: true, authorized: true };
   }
 
   // --- Shield ON ---
@@ -113,7 +145,7 @@ export async function handleToolCall(call: ToolCall, ctx: GatewayContext): Promi
   try {
     const policy = ctx.policy ?? getPolicy();
     const guard = ctx.ledger.isTainted()
-      ? await safeClassify(providers.guard, { call, untrustedText: ctx.ledger.untrustedText() })
+      ? await safeClassify(providers.guard, { call, untrustedText: ctx.ledger.untrustedText() }, config.guardTimeoutMs + 250)
       : NOT_CONSULTED;
     decision = evaluate(call, ctx.ledger, policy, guard);
   } catch (err) {
@@ -134,12 +166,9 @@ export async function handleToolCall(call: ToolCall, ctx: GatewayContext): Promi
     });
   }
 
-  let executed = false;
-  let text = "";
-
+  let authorized = false;
   if (decision.verdict === "ALLOW") {
-    ({ executed, text } = runTool(call, ctx));
-    decision.outcome = executed ? "EXECUTED" : "BLOCKED";
+    authorized = true;
   } else if (decision.verdict === "DENY") {
     decision.outcome = "BLOCKED";
   } else {
@@ -156,12 +185,28 @@ export async function handleToolCall(call: ToolCall, ctx: GatewayContext): Promi
     } catch {
       audited = false;
     }
-    if (answer.result === "approved" && audited) {
-      ({ executed, text } = runTool(call, ctx));
-      decision.outcome = executed ? "APPROVED_EXECUTED" : "BLOCKED";
-    } else {
-      decision.outcome = answer.result === "approved" ? "BLOCKED" : answer.result === "rejected" ? "REJECTED" : "TIMED_OUT";
+    if (answer.result === "approved" && audited) authorized = true;
+    else decision.outcome = answer.result === "approved" ? "BLOCKED" : answer.result === "rejected" ? "REJECTED" : "TIMED_OUT";
+  }
+
+  const approved = decision.verdict === "REQUIRE_APPROVAL";
+  if (authorized && ctx.deferExecution) {
+    // The caller runs the tool; its result arrives later through recordToolResult().
+    decision.outcome = approved ? "APPROVED_EXECUTED" : "EXECUTED";
+    await bus.publishSafe({ type: "decision.made", run_id: ctx.run_id, decision });
+    return { result: "", decision, executed: false, authorized: true };
+  }
+
+  let executed = false;
+  let text = "";
+  if (authorized) {
+    try {
+      text = await execute(call, ctx);
+      executed = true;
+    } catch (err) {
+      text = `Tool error: ${(err as Error).message}`;
     }
+    decision.outcome = executed ? (approved ? "APPROVED_EXECUTED" : "EXECUTED") : "BLOCKED";
   }
 
   await bus.publishSafe({ type: "decision.made", run_id: ctx.run_id, decision });
@@ -169,17 +214,9 @@ export async function handleToolCall(call: ToolCall, ctx: GatewayContext): Promi
   if (executed) {
     ctx.onExecuted?.(decision, text);
     await bus.publishSafe({ type: "tool.executed", run_id: ctx.run_id, decision_id: decision.decision_id, result_preview: preview(text) });
-    return { result: text, decision, executed };
+    return { result: text, decision, executed, authorized };
   }
-  return { result: blockedMessage(decision), decision, executed };
-}
-
-function runTool(call: ToolCall, ctx: GatewayContext): { executed: boolean; text: string } {
-  try {
-    return { executed: true, text: execute(call, ctx) };
-  } catch (err) {
-    return { executed: false, text: `Tool error: ${(err as Error).message}` };
-  }
+  return { result: authorized ? text : blockedMessage(decision), decision, executed, authorized };
 }
 
 export function blockedMessage(decision: Decision): string {

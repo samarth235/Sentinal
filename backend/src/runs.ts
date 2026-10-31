@@ -1,5 +1,5 @@
 import { nanoid } from "nanoid";
-import type { Decision, RunSummary } from "./types.js";
+import type { Decision, RunMode, RunSummary } from "./types.js";
 import { ContextLedger } from "./gateway/contextLedger.js";
 import type { GatewayContext } from "./gateway/gateway.js";
 import { bus as defaultBus } from "./integrations/index.js";
@@ -13,8 +13,11 @@ export interface RunRecord {
   session_id: string;
   scenario: Scenario;
   shield: boolean;
-  mode: "live" | "scripted";
+  mode: RunMode;
   ledger: ContextLedger;
+  /** For sdk sessions: which agent key opened it, and when it was last used. */
+  agent?: string;
+  last_activity: number;
   decisions: Decision[];
   executed: { decision_id: string; tool: string; text: string }[];
   status: "running" | "finished" | "failed";
@@ -24,7 +27,7 @@ export interface RunRecord {
 const runs = new Map<string, RunRecord>();
 const decisionIndex = new Map<string, { run_id: string; ledgerSize: number }>();
 
-export function createRun(scenario: Scenario, shield: boolean, mode: "live" | "scripted", bus: SentinelBus = defaultBus): RunRecord {
+export function createRun(scenario: Scenario, shield: boolean, mode: RunMode, bus: SentinelBus = defaultBus): RunRecord {
   const run_id = `run_${nanoid(10)}`;
   const record: RunRecord = {
     run_id,
@@ -36,9 +39,43 @@ export function createRun(scenario: Scenario, shield: boolean, mode: "live" | "s
     decisions: [],
     executed: [],
     status: "running",
+    last_activity: Date.now(),
   };
   runs.set(run_id, record);
   return record;
+}
+
+/** A gateway session for an external agent (SDK / REST). Same shape as a run, no scripted calls. */
+export function createSession(opts: { profile: string; title?: string; agent: string; shield?: boolean }, bus: SentinelBus = defaultBus): RunRecord {
+  const scenario: Scenario = {
+    id: "sdk",
+    title: opts.title ?? `${opts.agent} session`,
+    profile: opts.profile,
+    user_prompt: "",
+    scripted_calls: [],
+    expected: [],
+    attack_success_check: { type: "none" },
+  };
+  const run = createRun(scenario, opts.shield ?? true, "sdk", bus);
+  run.agent = opts.agent;
+  return run;
+}
+
+export function listRuns(): RunRecord[] {
+  return [...runs.values()];
+}
+
+/** Drop finished/idle runs so a long-running server does not grow without bound. */
+export function pruneRuns(maxIdleMs: number, now = Date.now()): string[] {
+  const dropped: string[] = [];
+  for (const [id, run] of runs) {
+    if (run.status === "running" && run.mode !== "sdk") continue;
+    if (now - run.last_activity < maxIdleMs) continue;
+    runs.delete(id);
+    for (const d of run.decisions) decisionIndex.delete(d.decision_id);
+    dropped.push(id);
+  }
+  return dropped;
 }
 
 /** Gateway context wired to record decisions and results on this run. */
@@ -50,6 +87,7 @@ export function gatewayContext(run: RunRecord, extra: Partial<GatewayContext> = 
     shield: run.shield,
     ledger: run.ledger,
     onDecision: (d, ledgerSize) => {
+      run.last_activity = Date.now();
       run.decisions.push(d);
       decisionIndex.set(d.decision_id, { run_id: run.run_id, ledgerSize });
     },

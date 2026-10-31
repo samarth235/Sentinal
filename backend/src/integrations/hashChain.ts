@@ -36,6 +36,10 @@ export interface ChainStore {
   tamper(): Promise<number | null>;
   /** Demo only: overwrite one row's payload in place (used by tamper and its undo). */
   setPayload(seq: number, payload: unknown): Promise<void>;
+  /** Readiness: throws if the store cannot be reached. */
+  ping(): Promise<void>;
+  /** Newest row's seq + hash (null for an empty chain). */
+  head(): Promise<{ seq: number; hash: string } | null>;
 }
 
 /**
@@ -90,6 +94,14 @@ export class HashChainAuditSink implements AuditSink {
       this.originals.delete(seq);
     }
     return seqs;
+  }
+
+  head(): Promise<{ seq: number; hash: string } | null> {
+    return this.store.head();
+  }
+
+  ping(): Promise<void> {
+    return this.store.ping();
   }
 
   get tamperedSeqs(): number[] {
@@ -170,6 +182,16 @@ export class MemoryChainStore implements ChainStore {
     if (!row) return null;
     row.payload = flipVerdict(row.payload);
     return row.seq;
+  }
+
+  async ping(): Promise<void> {
+    await this.load();
+  }
+
+  async head(): Promise<{ seq: number; hash: string } | null> {
+    await this.load();
+    const last = this.rows.at(-1);
+    return last ? { seq: last.seq, hash: last.hash } : null;
   }
 
   /** Only the in-memory copy changes; the JSONL mirror keeps the original row. */
