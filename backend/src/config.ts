@@ -12,7 +12,8 @@ export const config = {
   anthropicModel: process.env.ANTHROPIC_MODEL ?? "claude-sonnet-5-5",
   port: Number(process.env.PORT ?? 4000),
   policyPath: path.resolve(process.env.POLICY_PATH ?? "./src/policy/policy.yaml"),
-  approvalTimeoutSeconds: Number(process.env.APPROVAL_TIMEOUT_SECONDS ?? 60),
+  // Optional override; otherwise policy.yaml defaults.approval_timeout_seconds applies (see approvalTimeoutSeconds()).
+  approvalTimeoutOverride: process.env.APPROVAL_TIMEOUT_SECONDS ? Number(process.env.APPROVAL_TIMEOUT_SECONDS) : null,
   auditPath: process.env.AUDIT_PATH ?? "./audit.jsonl",
 
   // Person B integrations — each one falls back to a stub when unset.
@@ -28,4 +29,6 @@ export const config = {
   // Shared secret for every state-changing route. Required when NODE_ENV=production.
   apiToken: process.env.API_TOKEN ?? "",
   production: process.env.NODE_ENV === "production",
+  // "production" turns off every demo affordance (shield off, reset, tamper demo, heuristic-only guard).
+  strict: process.env.SENTINEL_MODE === "production",
 };

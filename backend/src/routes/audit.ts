@@ -4,10 +4,11 @@ import type { HashChainAuditSink } from "../integrations/hashChain.js";
 /** GET /api/audit, GET /api/audit/verify, POST /api/audit/tamper-demo(/restore), GET /api/ui-config */
 export interface UiConfig {
   tamperDemo: boolean;
-  approvalTimeoutSeconds: number;
+  approvalTimeoutSeconds: () => number;
   guardProvider: string;
   telegram: boolean;
   authRequired: boolean;
+  mode: "demo" | "production";
 }
 
 export function auditRoutes(getChain: () => HashChainAuditSink | null, opts: UiConfig): Router {
@@ -39,10 +40,11 @@ export function auditRoutes(getChain: () => HashChainAuditSink | null, opts: UiC
     res.json({
       audit_store: getChain()?.store.kind ?? null,
       tamper_demo: opts.tamperDemo,
-      approval_timeout_seconds: opts.approvalTimeoutSeconds,
+      approval_timeout_seconds: opts.approvalTimeoutSeconds(),
       guard_provider: opts.guardProvider,
       telegram: opts.telegram,
       auth_required: opts.authRequired,
+      mode: opts.mode,
     });
   });
 

@@ -1,3 +1,4 @@
+import "@xyflow/react/dist/style.css";
 import { useMemo } from "react";
 import { Background, MarkerType, Position, ReactFlow, type Edge, type Node } from "@xyflow/react";
 import { decisionsOf, segmentSource } from "../lib/derive";

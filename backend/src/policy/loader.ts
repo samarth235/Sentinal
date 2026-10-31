@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { parse } from "yaml";
 import { z } from "zod";
@@ -65,21 +66,41 @@ export function loadPolicy(policyPath: string): Policy {
   return parsePolicy(fs.readFileSync(policyPath, "utf8"));
 }
 
+/** sha256 of the policy file bytes: identifies exactly which policy produced a decision. */
+export const policyHashOf = (text: string) => createHash("sha256").update(text).digest("hex");
+
 let current: Policy | null = null;
 let currentPath: string | null = null;
+let currentHash: string | null = null;
 
 /** Load the active policy. Called once at startup; an invalid policy throws and the server refuses to start. */
 export function initPolicy(policyPath: string): Policy {
-  current = loadPolicy(policyPath);
+  const text = fs.readFileSync(policyPath, "utf8");
+  current = parsePolicy(text);
   currentPath = policyPath;
+  currentHash = policyHashOf(text);
   return current;
 }
 
-/** Re-read the policy file (used by replay). Keeps the old policy if the new one is invalid. */
-export function reloadPolicy(): Policy {
+/**
+ * Read the policy file as it is now, WITHOUT installing it (used by replay). Live runs keep the
+ * policy loaded at startup, so a replay can never change enforcement as a side effect.
+ */
+export function readPolicyFile(): { policy: Policy; hash: string } {
   if (!currentPath) throw new PolicyError("Policy not initialised");
-  current = loadPolicy(currentPath);
-  return current;
+  const text = fs.readFileSync(currentPath, "utf8");
+  return { policy: parsePolicy(text), hash: policyHashOf(text) };
+}
+
+/** Hash of the policy currently enforced by live runs. */
+export function activePolicyHash(): string {
+  if (!currentHash) throw new PolicyError("Policy not initialised");
+  return currentHash;
+}
+
+/** Approval timeout: APPROVAL_TIMEOUT_SECONDS if set, else the policy default. */
+export function approvalTimeoutSeconds(override: number | null): number {
+  return override ?? getPolicy().defaults.approval_timeout_seconds;
 }
 
 export function getPolicy(): Policy {

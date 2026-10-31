@@ -39,9 +39,9 @@ const deny = (code: Reason["code"], message: string, evidence?: Evidence[]): Rul
   reason: evidence ? { code, message, evidence } : { code, message },
 });
 
-const approve = (code: Reason["code"], message: string): RuleResult => ({
+const approve = (code: Reason["code"], message: string, evidence?: Evidence[]): RuleResult => ({
   verdict: "REQUIRE_APPROVAL",
-  reason: { code, message },
+  reason: evidence ? { code, message, evidence } : { code, message },
 });
 
 const ARG_LABEL: Record<string, string> = { to: "Recipient", payee: "Payee", amount_inr: "Amount" };
@@ -124,7 +124,6 @@ const R5_sensitiveEgress: Rule = {
       const domain = recipient.split("@")[1] ?? "";
       destinationTrusted = policy.trusted_email_domains.includes(domain);
     }
-    if (destinationTrusted) return null;
 
     const hits = egressArgs.flatMap((arg) => {
       const v = call.args[arg];
@@ -133,6 +132,14 @@ const R5_sensitiveEgress: Rule = {
     if (hits.length === 0) return null;
 
     const kinds = [...new Set(hits.map((h) => h.kind))].join(", ");
+    // A trusted domain is not an exfiltration channel, but bulk sensitive data still deserves a human look.
+    if (destinationTrusted) {
+      return approve(
+        "SENSITIVE_DATA_EGRESS",
+        `This ${call.tool} call would send sensitive data (${kinds}) to ${String(call.args[toolPolicy!.recipient_arg!])}. The domain is trusted, so a human must confirm instead of a block.`,
+        hits.map((h) => h.evidence),
+      );
+    }
     const dest =
       call.tool === "browse_url"
         ? "a URL"

@@ -4,16 +4,15 @@ import { z } from "zod";
 import { config } from "./config.js";
 import { runLive } from "./agent/agentLoop.js";
 import { runScripted } from "./agent/scriptedRun.js";
-import { evaluate } from "./gateway/policyEngine.js";
-import { safeClassify, NOT_CONSULTED } from "./integrations/guard.js";
 import { auditChain, bus, httpApprovals, providers } from "./integrations/index.js";
 import { attachSocketBridge } from "./integrations/socketBridge.js";
 import { startTelegramBot } from "./integrations/telegramBot.js";
 import { errorHandler, requireJson, requireToken } from "./http.js";
 import { maskDeep } from "./integrations/masking.js";
 import { auditRoutes } from "./routes/audit.js";
-import { initPolicy, reloadPolicy, PolicyError } from "./policy/loader.js";
-import { allDecisions, clearRuns, createRun, findDecision, getRun, summarize } from "./runs.js";
+import { activePolicyHash, approvalTimeoutSeconds, initPolicy, readPolicyFile, PolicyError } from "./policy/loader.js";
+import { allDecisions, clearRuns, createRun, getRun, summarize } from "./runs.js";
+import { replayDecision } from "./replay.js";
 import { getScenario, scenarios } from "./scenarios.js";
 import { getLedger, getOutbox, reset } from "./tools/state.js";
 
@@ -25,15 +24,20 @@ try {
   process.exit(1);
 }
 // Fail closed: a public deployment without an API token would let anyone approve actions.
-if (config.production && !config.apiToken) {
-  console.error("[sentinel] refusing to start: NODE_ENV=production requires API_TOKEN");
+const startupProblems = [
+  (config.production || config.strict) && !config.apiToken && "NODE_ENV=production / SENTINEL_MODE=production requires API_TOKEN",
+  config.strict && config.enableTamperDemo && "SENTINEL_MODE=production forbids ENABLE_TAMPER_DEMO=true",
+  config.strict && !(config.groqApiKey && config.groqModel) && "SENTINEL_MODE=production requires the Groq guard (GROQ_API_KEY + GROQ_MODEL)",
+].filter(Boolean);
+if (startupProblems.length) {
+  for (const p of startupProblems) console.error(`[sentinel] refusing to start: ${p}`);
   process.exit(1);
 }
 if (!config.apiToken) console.warn("[sentinel] API_TOKEN not set — state-changing routes are open (local demo only)");
 
 export const app = express();
 let bridge: ReturnType<typeof attachSocketBridge> | undefined;
-app.use(cors({ origin: config.frontendOrigins }));
+app.use(cors({ origin: config.frontendOrigins, exposedHeaders: ["X-Policy-Hash", "X-Original-Policy-Hash"] }));
 app.use("/api", requireJson, requireToken(config.apiToken));
 app.use(express.json({ limit: "1mb" }));
 
@@ -51,6 +55,7 @@ app.get("/api/scenarios", (_req, res) => {
 app.post("/api/runs", (req, res) => {
   const body = RunBody.safeParse(req.body);
   if (!body.success) return void res.status(400).json({ error: z.prettifyError(body.error) });
+  if (config.strict && !body.data.shield) return void res.status(403).json({ error: "shield cannot be turned off in production mode" });
   const scenario = getScenario(body.data.scenario_id);
   if (!scenario) return void res.status(404).json({ error: `unknown scenario ${body.data.scenario_id}` });
 
@@ -64,7 +69,7 @@ app.get("/api/runs/:run_id", (req, res) => {
   const run = getRun(req.params.run_id);
   if (!run) return void res.status(404).json({ error: "unknown run" });
   // TODO(person-b): status/error are extras beyond RunSummary, handy for the dashboard.
-  res.json(maskDeep({ ...summarize(run), status: run.status, error: run.error }));
+  res.json(maskDeep({ ...summarize(run), status: run.status, error: run.error, policy_hash: run.policy_hash }));
 });
 
 app.get("/api/decisions", (req, res) => {
@@ -95,6 +100,7 @@ app.get("/api/ledger", (_req, res) => {
 });
 
 app.post("/api/reset", (_req, res) => {
+  if (config.strict) return void res.status(403).json({ error: "reset is disabled in production mode" });
   httpApprovals.rejectAll();
   reset();
   clearRuns();
@@ -102,34 +108,38 @@ app.post("/api/reset", (_req, res) => {
   res.json({ ok: true });
 });
 
-/** Re-evaluate a stored call against the CURRENT policy file, with the context the agent had at the time. No execution. */
-app.post("/api/replay/:decision_id", async (req, res) => {
-  const found = findDecision(req.params.decision_id);
-  if (!found) return void res.status(404).json({ error: "unknown decision" });
-  let policy;
+/** Re-evaluate a stored call against the CURRENT policy file. No execution; the live policy is untouched. */
+app.post("/api/replay/:decision_id", async (req, res, next) => {
   try {
-    policy = reloadPolicy();
+    const result = await replayDecision(req.params.decision_id);
+    if (!result) return void res.status(404).json({ error: "unknown decision" });
+    res.set("X-Policy-Hash", result.policy_hash).set("X-Original-Policy-Hash", result.original_policy_hash);
+    res.json(maskDeep(result.decision));
   } catch (err) {
-    const status = err instanceof PolicyError ? 422 : 500;
-    return void res.status(status).json({ error: (err as Error).message });
+    if (err instanceof PolicyError) return void res.status(422).json({ error: err.message });
+    next(err);
   }
-  const ledger = found.run.ledger.snapshot(found.ledgerSize);
-  const t0 = performance.now();
-  const guard = ledger.isTainted()
-    ? await safeClassify(providers.guard, { call: found.decision.call, untrustedText: ledger.untrustedText() })
-    : NOT_CONSULTED;
-  const decision = evaluate(found.decision.call, ledger, policy, guard);
-  decision.latency_ms = Math.round((performance.now() - t0) * 100) / 100;
-  res.json(maskDeep(decision));
+});
+
+/** Which policy live runs enforce, and whether the file on disk has changed since startup. */
+app.get("/api/policy", (_req, res, next) => {
+  try {
+    const onDisk = readPolicyFile().hash;
+    res.json({ active_hash: activePolicyHash(), file_hash: onDisk, changed_since_start: onDisk !== activePolicyHash() });
+  } catch (err) {
+    if (err instanceof PolicyError) return void res.json({ active_hash: activePolicyHash(), file_hash: null, changed_since_start: true, error: err.message });
+    next(err);
+  }
 });
 
 app.use(
   auditRoutes(() => auditChain, {
     tamperDemo: config.enableTamperDemo,
-    approvalTimeoutSeconds: config.approvalTimeoutSeconds,
+    approvalTimeoutSeconds: () => approvalTimeoutSeconds(config.approvalTimeoutOverride),
     guardProvider: providers.guard.constructor.name,
     telegram: Boolean(config.telegramBotToken && config.telegramAllowedChatId),
     authRequired: Boolean(config.apiToken),
+    mode: config.strict ? "production" : "demo",
   }),
 );
 
@@ -140,16 +150,35 @@ const server = app.listen(config.port, () => {
 });
 bridge = attachSocketBridge(server, bus, config.frontendOrigins);
 
+let telegram: ReturnType<typeof startTelegramBot> | undefined;
 if (config.telegramBotToken && config.telegramAllowedChatId) {
-  startTelegramBot({
+  telegram = startTelegramBot({
     token: config.telegramBotToken,
     allowedChatId: config.telegramAllowedChatId,
     allowedUserIds: config.telegramAllowedUserIds,
-    timeoutSeconds: config.approvalTimeoutSeconds,
+    timeoutSeconds: () => approvalTimeoutSeconds(config.approvalTimeoutOverride),
     bus,
     resolve: (id, approve, approver) => httpApprovals.resolve(id, approve, approver),
     pending: () => httpApprovals.list(),
+    recent: () => allDecisions().slice(-5),
+    verify: async () => (auditChain ? auditChain.verify() : null),
+    replay: replayDecision,
   });
 } else {
   console.warn("[sentinel] TELEGRAM_BOT_TOKEN/TELEGRAM_ALLOWED_CHAT_ID not set — approvals via dashboard/API only");
 }
+
+/** Graceful shutdown (Docker/Railway send SIGTERM): stop polling, close sockets, finish in-flight requests. */
+let stopping = false;
+function shutdown(signal: string) {
+  if (stopping) return;
+  stopping = true;
+  console.log(`[sentinel] ${signal} received, shutting down`);
+  httpApprovals.rejectAll();
+  void telegram?.stop().catch(() => undefined);
+  bridge?.close();
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(1), 5000).unref();
+}
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));

@@ -1,4 +1,4 @@
-import type { AuditRow, Decision, LedgerPayment, OutboxEmail, RunSummary, ScenarioInfo, UiConfig, VerifyResult } from "./types";
+import type { AuditRow, LedgerPayment, ReplayResult, OutboxEmail, RunSummary, ScenarioInfo, UiConfig, VerifyResult } from "./types";
 
 export const API_URL = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, "") ?? "http://localhost:4000";
 
@@ -22,7 +22,7 @@ export function setToken(token: string) {
   }
 }
 
-async function req<T>(path: string, init?: RequestInit): Promise<T> {
+async function send<T>(path: string, init?: RequestInit): Promise<{ body: T; headers: Headers }> {
   const token = getToken();
   const res = await fetch(`${API_URL}${path}`, {
     ...init,
@@ -30,8 +30,10 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((body as { error?: string }).error ?? `${res.status} ${res.statusText}`);
-  return body as T;
+  return { body: body as T, headers: res.headers };
 }
+
+const req = async <T>(path: string, init?: RequestInit): Promise<T> => (await send<T>(path, init)).body;
 
 export const api = {
   scenarios: () => req<ScenarioInfo[]>("/api/scenarios"),
@@ -44,7 +46,10 @@ export const api = {
   outbox: () => req<OutboxEmail[]>("/api/outbox"),
   ledger: () => req<LedgerPayment[]>("/api/ledger"),
   reset: () => req<{ ok: true }>("/api/reset", { method: "POST" }),
-  replay: (decisionId: string) => req<Decision>(`/api/replay/${decisionId}`, { method: "POST" }),
+  replay: async (decisionId: string): Promise<ReplayResult> => {
+    const { body, headers } = await send<ReplayResult["decision"]>(`/api/replay/${decisionId}`, { method: "POST" });
+    return { decision: body, policyHash: headers.get("X-Policy-Hash"), originalPolicyHash: headers.get("X-Original-Policy-Hash") };
+  },
   audit: () => req<{ store: string; rows: AuditRow[] }>("/api/audit"),
   verify: () => req<VerifyResult>("/api/audit/verify"),
   tamper: () => req<{ tampered_seq: number }>("/api/audit/tamper-demo", { method: "POST" }),

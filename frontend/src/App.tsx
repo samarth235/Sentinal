@@ -1,16 +1,18 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { AuditPanel } from "./components/AuditPanel";
 import { CompareCards, type ComparePair } from "./components/CompareCards";
 import { ContextPanel } from "./components/ContextPanel";
 import { ControlBar } from "./components/ControlBar";
 import { DamagePanel } from "./components/DamagePanel";
 import { DecisionFeed } from "./components/DecisionFeed";
-import { DecisionGraph } from "./components/DecisionGraph";
 import { notifyToast, Toasts, type ToastTone } from "./components/Toasts";
 import { api } from "./lib/api";
 import { decisionsOf, evidenceOf, latestWithEvidence } from "./lib/derive";
 import { connect, useStore, waitForFinish } from "./lib/store";
 import type { AuditRow, LedgerPayment, OutboxEmail, ScenarioInfo, UiConfig } from "./lib/types";
+
+// React Flow is the heaviest dependency; load it in its own chunk.
+const DecisionGraph = lazy(() => import("./components/DecisionGraph").then((m) => ({ default: m.DecisionGraph })));
 
 export default function App() {
   const store = useStore();
@@ -96,6 +98,10 @@ export default function App() {
     setSelectedDecision(undefined);
     return run_id;
   };
+
+  useEffect(() => {
+    if (config?.mode === "production") setShield(true);
+  }, [config?.mode]);
 
   const onRun = async () => {
     setBusy(true);
@@ -191,7 +197,9 @@ export default function App() {
 
       <main className="mx-5 mt-3 grid h-[max(420px,calc(100vh-430px))] grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_minmax(0,1fr)] gap-3">
         <ContextPanel run={run} evidence={evidence} />
-        <DecisionGraph run={run} selectedId={effectiveDecisionId} onSelect={setSelectedDecision} dark={dark} />
+        <Suspense fallback={<section className="panel" aria-busy="true" />}>
+          <DecisionGraph run={run} selectedId={effectiveDecisionId} onSelect={setSelectedDecision} dark={dark} />
+        </Suspense>
         <DecisionFeed run={run} selectedId={effectiveDecisionId} onSelect={setSelectedDecision} timeoutSeconds={config?.approval_timeout_seconds ?? 60} notify={(m) => notify(m, "error")} />
       </main>
 

@@ -1,4 +1,5 @@
 import { config } from "../config.js";
+import { approvalTimeoutSeconds } from "../policy/loader.js";
 import { HttpApprovalProvider, type ApprovalProvider } from "./approvals.js";
 import type { AuditSink } from "./audit.js";
 import { bus } from "./bus.js";
@@ -14,7 +15,7 @@ export interface Providers {
 }
 
 /** The HTTP approval queue backs POST /api/approvals, the dashboard and the Telegram bot. */
-export const httpApprovals = new HttpApprovalProvider(() => config.approvalTimeoutSeconds);
+export const httpApprovals = new HttpApprovalProvider(() => approvalTimeoutSeconds(config.approvalTimeoutOverride));
 
 function chooseGuard(): GuardProvider {
   if (config.groqApiKey && config.groqModel) {

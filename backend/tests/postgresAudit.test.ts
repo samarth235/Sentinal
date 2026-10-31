@@ -53,6 +53,9 @@ describe.each([
     expect(seq).toBe(3);
     const v = await chain.verify();
     expect(v).toMatchObject({ valid: false, broken_at: 3 });
+
+    expect(await chain.restore()).toEqual([3]);
+    expect(await chain.verify()).toEqual({ valid: true, rows: 4 });
     await pool.end();
   });
 });

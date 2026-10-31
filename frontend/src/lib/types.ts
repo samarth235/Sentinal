@@ -13,6 +13,7 @@ export type {
   Trust,
   Verdict,
 } from "../../../backend/src/types.ts";
+import type { Decision } from "../../../backend/src/types.ts";
 
 export interface ScenarioInfo {
   id: string;
@@ -28,6 +29,13 @@ export interface UiConfig {
   guard_provider: string;
   telegram: boolean;
   auth_required: boolean;
+  mode: "demo" | "production";
+}
+
+export interface ReplayResult {
+  decision: Decision;
+  policyHash: string | null;
+  originalPolicyHash: string | null;
 }
 
 export interface OutboxEmail {

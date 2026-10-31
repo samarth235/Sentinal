@@ -5,7 +5,7 @@ import { api } from "../lib/api";
 import { decisionsOf } from "../lib/derive";
 import { formatArg } from "../lib/mask";
 import type { RunState } from "../lib/store";
-import type { Decision } from "../lib/types";
+import type { Decision, ReplayResult } from "../lib/types";
 import { OutcomePill, VerdictBadge } from "./verdict";
 
 function Countdown({ since, seconds }: { since: number; seconds: number }) {
@@ -33,7 +33,7 @@ function Card({
   timeoutSeconds: number;
   notify: (msg: string) => void;
 }) {
-  const [replay, setReplay] = useState<Decision | null>(null);
+  const [replay, setReplay] = useState<ReplayResult | null>(null);
   const [details, setDetails] = useState(false);
   const [sending, setSending] = useState(false);
   const pendingSince = run.pending[d.decision_id];
@@ -136,7 +136,12 @@ function Card({
         </button>
         {replay && (
           <span className="ml-auto flex items-center gap-2 text-fg-subtle">
-            Replay <VerdictBadge decision={replay} /> <span className="font-mono">{replay.rule_id}</span>
+            Replay <VerdictBadge decision={replay.decision} /> <span className="font-mono">{replay.decision.rule_id}</span>
+            {replay.policyHash && replay.originalPolicyHash && (
+              <span title={`then ${replay.originalPolicyHash}\nnow ${replay.policyHash}`}>
+                {replay.policyHash === replay.originalPolicyHash ? "same policy" : `policy ${replay.originalPolicyHash.slice(0, 7)} → ${replay.policyHash.slice(0, 7)}`}
+              </span>
+            )}
           </span>
         )}
       </div>
