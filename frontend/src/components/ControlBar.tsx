@@ -1,3 +1,5 @@
+import { ArrowLeftRight, Check, ChevronDown, Moon, Play, RotateCcw, ShieldCheck, Sun } from "lucide-react";
+import { Select, Switch, ToggleGroup } from "radix-ui";
 import type { ScenarioInfo, UiConfig } from "../lib/types";
 
 interface Props {
@@ -11,100 +13,137 @@ interface Props {
   busy: boolean;
   connected: boolean;
   config: UiConfig | null;
+  dark: boolean;
+  toggleDark: () => void;
   onRun: () => void;
   onBeforeAfter: () => void;
   onReset: () => void;
 }
 
-function Toggle<T extends string | boolean>({ value, options, onChange }: { value: T; options: { v: T; label: string; active: string }[]; onChange: (v: T) => void }) {
+function Meta({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex rounded-lg border border-line bg-panel-2 p-0.5">
-      {options.map((o) => (
-        <button
-          key={String(o.v)}
-          onClick={() => onChange(o.v)}
-          className={`rounded-md px-3 py-1.5 text-sm font-bold transition ${value === o.v ? o.active : "text-muted hover:text-zinc-200"}`}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
+    <span className="hidden items-center gap-1.5 lg:inline-flex">
+      <span className="text-fg-subtle">{label}</span>
+      <span className="text-fg-muted">{value}</span>
+    </span>
+  );
+}
+
+function ScenarioSelect({ scenarios, value, onChange }: { scenarios: ScenarioInfo[]; value: string; onChange: (v: string) => void }) {
+  return (
+    <Select.Root value={value} onValueChange={onChange}>
+      <Select.Trigger
+        aria-label="Scenario"
+        className="btn btn-outline w-80 justify-between font-normal data-[placeholder]:text-fg-subtle"
+      >
+        <Select.Value placeholder="Choose a scenario" />
+        <Select.Icon>
+          <ChevronDown size={14} className="text-fg-subtle" />
+        </Select.Icon>
+      </Select.Trigger>
+      <Select.Portal>
+        <Select.Content position="popper" sideOffset={4} className="z-50 min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-md border border-line bg-surface p-1 text-fg shadow-lg">
+          <Select.Viewport>
+            {scenarios.map((s) => (
+              <Select.Item
+                key={s.id}
+                value={s.id}
+                className="relative flex cursor-default select-none items-center gap-2 rounded px-2 py-1.5 pr-7 text-[13px] outline-none data-[highlighted]:bg-subtle"
+              >
+                <span className="w-6 font-mono text-xs text-fg-subtle">{s.id.split("_")[0]}</span>
+                <Select.ItemText>{s.title}</Select.ItemText>
+                <Select.ItemIndicator className="absolute right-2">
+                  <Check size={14} />
+                </Select.ItemIndicator>
+              </Select.Item>
+            ))}
+          </Select.Viewport>
+        </Select.Content>
+      </Select.Portal>
+    </Select.Root>
   );
 }
 
 export function ControlBar(p: Props) {
   const current = p.scenarios.find((s) => s.id === p.scenarioId);
   return (
-    <header className="border-b border-line bg-panel/80 px-5 py-3">
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
-        <div className="flex items-center gap-2.5">
-          <div className="grid h-8 w-8 place-items-center rounded-lg bg-brand text-lg font-black">S</div>
-          <span className="text-xl font-extrabold tracking-[0.18em]">SENTINEL</span>
-        </div>
-
-        <select
-          value={p.scenarioId}
-          onChange={(e) => p.setScenarioId(e.target.value)}
-          className="rounded-lg border border-line bg-panel-2 px-3 py-2 text-sm font-semibold"
-        >
-          {p.scenarios.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.id.split("_")[0]} — {s.title}
-            </option>
-          ))}
-        </select>
-
-        <div className="flex items-center gap-2 text-sm text-muted">
-          Shield
-          <Toggle
-            value={p.shield}
-            onChange={p.setShield}
-            options={[
-              { v: true, label: "ON", active: "bg-allow text-black" },
-              { v: false, label: "OFF", active: "bg-deny text-white" },
-            ]}
-          />
-        </div>
-        <div className="flex items-center gap-2 text-sm text-muted">
-          Mode
-          <Toggle
-            value={p.mode}
-            onChange={p.setMode}
-            options={[
-              { v: "scripted", label: "scripted", active: "bg-zinc-200 text-black" },
-              { v: "live", label: "live", active: "bg-zinc-200 text-black" },
-            ]}
-          />
-        </div>
-
+    <header className="border-b border-line bg-surface">
+      <div className="flex h-12 items-center gap-4 border-b border-line px-5">
         <div className="flex items-center gap-2">
-          <button className="btn btn-primary" disabled={p.busy || !p.connected} onClick={p.onRun}>
-            ▶ Run
-          </button>
-          <button className="btn btn-ghost" disabled={p.busy || !p.connected} onClick={p.onBeforeAfter}>
-            ⇄ Run before/after
-          </button>
-          <button className="btn btn-ghost" disabled={p.busy} onClick={p.onReset}>
-            ↺ Reset
-          </button>
+          <ShieldCheck size={18} strokeWidth={2} />
+          <span className="text-[15px] font-semibold">Sentinel</span>
+          <span className="hidden text-[13px] text-fg-subtle sm:inline">Tool-call policy gateway</span>
         </div>
-
-        <div className="ml-auto flex items-center gap-3 text-xs text-muted">
+        <div className="ml-auto flex items-center gap-5 text-xs">
           {p.config && (
-            <span className="hidden xl:inline">
-              guard: {p.config.guard_provider === "GroqGuard" ? "Groq" : "heuristic"} · audit: {p.config.audit_store ?? "none"} · approvals:{" "}
-              {p.config.telegram ? "Telegram + dashboard" : "dashboard"}
-            </span>
+            <>
+              <Meta label="Guard" value={p.config.guard_provider === "GroqGuard" ? "Groq" : "Heuristic"} />
+              <Meta label="Audit" value={p.config.audit_store ?? "none"} />
+              <Meta label="Approvals" value={p.config.telegram ? "Telegram, dashboard" : "Dashboard"} />
+            </>
           )}
-          <span className={`flex items-center gap-1.5 font-semibold ${p.connected ? "text-allow" : "text-deny"}`}>
-            <span className={`h-2 w-2 rounded-full ${p.connected ? "bg-allow" : "bg-deny animate-pulse"}`} />
-            {p.connected ? "live" : "offline"}
+          <span className="inline-flex items-center gap-1.5 text-fg-muted">
+            <span className={`h-2 w-2 rounded-full ${p.connected ? "bg-allow-solid" : "bg-deny-solid"}`} />
+            {p.connected ? "Connected" : "Offline"}
           </span>
+          <button className="btn btn-ghost btn-sm w-7 px-0" onClick={p.toggleDark} aria-label="Toggle theme">
+            {p.dark ? <Sun size={15} /> : <Moon size={15} />}
+          </button>
         </div>
       </div>
+
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-3 px-5 py-3">
+        <ScenarioSelect scenarios={p.scenarios} value={p.scenarioId} onChange={p.setScenarioId} />
+
+        <label className="flex items-center gap-2 text-[13px] text-fg-muted">
+          <Switch.Root
+            checked={p.shield}
+            onCheckedChange={p.setShield}
+            className="relative h-5 w-9 shrink-0 rounded-full bg-active outline-none transition-colors focus-visible:ring-2 focus-visible:ring-line-strong data-[state=checked]:bg-allow-solid"
+          >
+            <Switch.Thumb className="block h-4 w-4 translate-x-0.5 rounded-full bg-white shadow transition-transform data-[state=checked]:translate-x-[18px]" />
+          </Switch.Root>
+          Shield <span className="w-6 font-medium text-fg">{p.shield ? "on" : "off"}</span>
+        </label>
+
+        <div className="flex items-center gap-2 text-[13px] text-fg-muted">
+          Mode
+          <ToggleGroup.Root
+            type="single"
+            value={p.mode}
+            onValueChange={(v) => v && p.setMode(v as "scripted" | "live")}
+            className="inline-flex h-8 rounded-md border border-line bg-subtle p-0.5"
+          >
+            {(["scripted", "live"] as const).map((m) => (
+              <ToggleGroup.Item
+                key={m}
+                value={m}
+                className="rounded-[5px] px-3 text-[13px] capitalize text-fg-muted outline-none data-[state=on]:bg-surface data-[state=on]:text-fg data-[state=on]:shadow-sm"
+              >
+                {m}
+              </ToggleGroup.Item>
+            ))}
+          </ToggleGroup.Root>
+        </div>
+
+        <div className="ml-auto flex items-center gap-2">
+          <button className="btn btn-ghost" disabled={p.busy} onClick={p.onReset}>
+            <RotateCcw size={14} /> Reset
+          </button>
+          <button className="btn btn-outline" disabled={p.busy || !p.connected} onClick={p.onBeforeAfter}>
+            <ArrowLeftRight size={14} /> Compare off / on
+          </button>
+          <button className="btn btn-primary" disabled={p.busy || !p.connected} onClick={p.onRun}>
+            <Play size={14} /> Run
+          </button>
+        </div>
+      </div>
+
       {current && (
-        <p className="mt-2 truncate text-sm text-zinc-400">
-          <span className="text-muted">User asks ({current.profile}):</span> “{current.user_prompt}”
+        <p className="truncate border-t border-line bg-canvas px-5 py-2 text-[13px] text-fg-muted">
+          <span className="text-fg-subtle">User prompt · {current.profile}</span>
+          <span className="mx-2 text-line-strong">|</span>
+          {current.user_prompt}
         </p>
       )}
     </header>

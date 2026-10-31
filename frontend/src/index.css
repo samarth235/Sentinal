@@ -1,28 +1,84 @@
 @import "tailwindcss";
 
-@theme {
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, monospace;
-  --color-ink: #0a0a0b;
-  --color-panel: #121214;
-  --color-panel-2: #1a1a1d;
-  --color-line: #2a2a2f;
-  --color-muted: #8b8b94;
-  --color-brand: #e11d2e;
-  --color-allow: #22c55e;
-  --color-deny: #ef4444;
-  --color-approve: #f59e0b;
-  --color-off: #6b7280;
+/* Radix Colors: perceptually tuned 12-step scales with matching light/dark variants. */
+@import "@radix-ui/colors/slate.css";
+@import "@radix-ui/colors/slate-dark.css";
+@import "@radix-ui/colors/slate-alpha.css";
+@import "@radix-ui/colors/slate-dark-alpha.css";
+@import "@radix-ui/colors/grass.css";
+@import "@radix-ui/colors/grass-dark.css";
+@import "@radix-ui/colors/red.css";
+@import "@radix-ui/colors/red-dark.css";
+@import "@radix-ui/colors/red-alpha.css";
+@import "@radix-ui/colors/red-dark-alpha.css";
+@import "@radix-ui/colors/amber.css";
+@import "@radix-ui/colors/amber-dark.css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --canvas: var(--slate-2);
+  --surface: #ffffff;
+}
+.dark {
+  --canvas: var(--slate-1);
+  --surface: var(--slate-2);
+}
+
+@theme inline {
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-subtle: var(--slate-3);
+  --color-hover: var(--slate-4);
+  --color-active: var(--slate-5);
+  --color-line: var(--slate-6);
+  --color-line-strong: var(--slate-7);
+  --color-fg: var(--slate-12);
+  --color-fg-muted: var(--slate-11);
+  --color-fg-subtle: var(--slate-9);
+
+  --color-allow: var(--grass-11);
+  --color-allow-bg: var(--grass-3);
+  --color-allow-line: var(--grass-7);
+  --color-allow-solid: var(--grass-9);
+  --color-deny: var(--red-11);
+  --color-deny-bg: var(--red-3);
+  --color-deny-line: var(--red-7);
+  --color-deny-solid: var(--red-9);
+  --color-warn: var(--amber-11);
+  --color-warn-bg: var(--amber-3);
+  --color-warn-line: var(--amber-7);
+  --color-warn-solid: var(--amber-9);
 }
 
 html, body, #root { height: 100%; }
-body { @apply bg-ink text-zinc-100 font-sans antialiased; }
+body {
+  @apply bg-canvas text-fg font-sans antialiased;
+  font-feature-settings: "ss01", "tnum";
+}
 
-.panel { @apply bg-panel border border-line rounded-xl flex flex-col min-h-0; }
-.panel-title { @apply text-[11px] font-semibold tracking-[0.14em] uppercase text-muted px-4 pt-3 pb-2 flex items-center justify-between gap-2; }
-.btn { @apply inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed; }
-.btn-primary { @apply bg-brand hover:bg-red-500 text-white; }
-.btn-ghost { @apply bg-panel-2 hover:bg-zinc-800 border border-line text-zinc-200; }
-.mark-evidence { @apply bg-red-500/35 text-red-100 outline outline-1 outline-red-400 rounded-[3px] px-0.5; }
+.panel { @apply bg-surface border border-line rounded-lg flex flex-col min-h-0 overflow-hidden; }
+.panel-head { @apply flex h-11 shrink-0 items-center justify-between gap-2 border-b border-line px-4; }
+.panel-title { @apply truncate text-[13px] font-semibold text-fg; }
+
+.btn {
+  @apply inline-flex h-8 items-center justify-center gap-1.5 rounded-md px-3 text-[13px] font-medium whitespace-nowrap transition-colors
+    outline-none focus-visible:ring-2 focus-visible:ring-line-strong disabled:pointer-events-none disabled:opacity-50;
+}
+.btn-sm { @apply h-7 px-2.5 text-xs; }
+.btn-primary { @apply bg-fg text-surface hover:opacity-90; }
+.btn-outline { @apply border border-line bg-surface text-fg hover:bg-subtle; }
+.btn-ghost { @apply text-fg-muted hover:bg-subtle hover:text-fg; }
+
+.mark-evidence {
+  background: var(--red-a4);
+  color: var(--red-12);
+  box-shadow: inset 0 -2px 0 var(--red-9);
+  @apply rounded-[2px] px-px;
+}
 
 .react-flow__attribution { display: none; }
+.react-flow { --xy-background-color: transparent; }

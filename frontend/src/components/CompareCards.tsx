@@ -1,3 +1,4 @@
+import { ArrowRight, CircleDashed, Loader2, ShieldAlert, ShieldCheck, X, type LucideIcon } from "lucide-react";
 import { decisionsOf } from "../lib/derive";
 import { countPans } from "../lib/mask";
 import type { RunState } from "../lib/store";
@@ -48,45 +49,48 @@ function describe(run: RunState | undefined, outbox: OutboxEmail[], ledger: Ledg
     return { tone: "good", headline: "Attack blocked", detail: `rule${denies.length > 1 ? "s" : ""} ${rules} · ${decisive.latency_ms} ms` };
   }
   if (!run.shield) {
-    return { tone: "neutral", headline: "Task completed — no checks", detail: emails.length ? `Email sent to ${emails.map((e) => e.to).join(", ")} without confirmation` : "Every call ran unprotected" };
+    return { tone: "neutral", headline: "Task completed, no checks", detail: emails.length ? `Email sent to ${emails.map((e) => e.to).join(", ")} without confirmation` : "Every call ran unprotected" };
   }
   const approved = decisions.find((d) => d.outcome === "APPROVED_EXECUTED");
   if (approved) return { tone: "good", headline: "Legitimate task allowed", detail: `${approved.call.tool} ran after human approval` };
   const blocked = decisions.find((d) => d.outcome === "REJECTED" || d.outcome === "TIMED_OUT");
-  if (blocked) return { tone: "neutral", headline: "Held for approval", detail: blocked.outcome === "TIMED_OUT" ? "No answer in time — blocked (fail closed)" : "Rejected by a human" };
+  if (blocked) return { tone: "neutral", headline: "Held for approval", detail: blocked.outcome === "TIMED_OUT" ? "No answer in time, blocked (fail closed)" : "Rejected by a human" };
   return { tone: "good", headline: "Completed", detail: "No unsafe action" };
 }
 
-const TONE = {
-  bad: "border-deny bg-red-950/40 text-deny",
-  good: "border-allow bg-green-950/30 text-allow",
-  neutral: "border-off bg-zinc-900 text-zinc-200",
-  pending: "border-approve/60 bg-amber-950/20 text-approve",
+const TONE: Record<Verdict["tone"], { Icon: LucideIcon; cls: string; accent: string }> = {
+  bad: { Icon: ShieldAlert, cls: "text-deny", accent: "bg-deny-solid" },
+  good: { Icon: ShieldCheck, cls: "text-allow", accent: "bg-allow-solid" },
+  neutral: { Icon: CircleDashed, cls: "text-fg-muted", accent: "bg-fg-subtle" },
+  pending: { Icon: Loader2, cls: "text-warn", accent: "bg-warn-solid" },
 };
 
 function Card({ label, v }: { label: string; v: Verdict }) {
+  const t = TONE[v.tone];
   return (
-    <div className={`flex-1 rounded-xl border-2 px-5 py-3.5 ${TONE[v.tone]}`}>
-      <div className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-400">{label}</div>
-      <div className="mt-1 flex items-baseline gap-3">
-        <span className="text-2xl font-black">
-          {v.tone === "bad" ? "✕ " : v.tone === "good" ? "✓ " : ""}
-          {v.headline}
-        </span>
+    <div className="relative flex flex-1 items-start gap-3 overflow-hidden rounded-lg border border-line bg-surface py-3.5 pl-5 pr-4">
+      <span className={`absolute inset-y-0 left-0 w-1 ${t.accent}`} />
+      <t.Icon size={20} className={`mt-0.5 shrink-0 ${t.cls} ${v.tone === "pending" ? "animate-spin" : ""}`} />
+      <div className="min-w-0">
+        <div className="text-xs text-fg-subtle">{label}</div>
+        <div className={`mt-0.5 text-base font-semibold ${t.cls}`}>{v.headline}</div>
+        {v.detail && <div className="mt-0.5 text-[13px] text-fg-muted">{v.detail}</div>}
       </div>
-      <div className="mt-0.5 text-[15px] font-medium text-zinc-200">{v.detail}</div>
     </div>
   );
 }
 
 export function CompareCards({ pair, runs, outbox, ledger, onClose }: { pair: ComparePair; runs: Record<string, RunState>; outbox: OutboxEmail[]; ledger: LedgerPayment[]; onClose: () => void }) {
+  const sid = pair.scenarioId.split("_")[0];
   return (
-    <div className="relative mx-5 mt-3 flex gap-3">
-      <Card label={`Shield OFF · ${pair.scenarioId}`} v={describe(pair.offRunId ? runs[pair.offRunId] : undefined, outbox, ledger)} />
-      <div className="grid place-items-center text-2xl text-muted">→</div>
-      <Card label={`Shield ON · ${pair.scenarioId}`} v={describe(pair.onRunId ? runs[pair.onRunId] : undefined, outbox, ledger)} />
-      <button onClick={onClose} className="absolute -top-2 -right-2 grid h-6 w-6 place-items-center rounded-full bg-zinc-800 text-xs text-zinc-300 hover:bg-zinc-700" aria-label="Close comparison">
-        ✕
+    <div className="mx-5 mt-4 flex items-stretch gap-3">
+      <Card label={`${sid} · Shield off`} v={describe(pair.offRunId ? runs[pair.offRunId] : undefined, outbox, ledger)} />
+      <div className="grid place-items-center text-fg-subtle">
+        <ArrowRight size={16} />
+      </div>
+      <Card label={`${sid} · Shield on`} v={describe(pair.onRunId ? runs[pair.onRunId] : undefined, outbox, ledger)} />
+      <button onClick={onClose} className="btn btn-ghost btn-sm w-7 self-start px-0" aria-label="Close comparison">
+        <X size={14} />
       </button>
     </div>
   );

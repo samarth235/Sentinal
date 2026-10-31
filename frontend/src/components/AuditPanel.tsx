@@ -1,5 +1,7 @@
+import { Link2, PencilLine, ShieldAlert, ShieldCheck } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
+import { EmptyState } from "./ui";
 import type { AuditRow, UiConfig, VerifyResult } from "../lib/types";
 
 const short = (h: string) => `${h.slice(0, 8)}…${h.slice(-4)}`;
@@ -49,45 +51,52 @@ export function AuditPanel({ rows, config, onChanged, notify }: { rows: AuditRow
 
   return (
     <section className="panel">
-      <div className="panel-title">
-        <span>Audit chain {config?.audit_store && <span className="normal-case tracking-normal text-zinc-500">· {config.audit_store}</span>}</span>
-        <span className="flex items-center gap-2 normal-case tracking-normal">
+      <div className="panel-head">
+        <span className="flex items-center gap-2">
+          <span className="panel-title">Audit chain</span>
+          {config?.audit_store && <span className="text-xs text-fg-subtle">{config.audit_store}</span>}
+        </span>
+        <span className="flex items-center gap-2">
           {verify &&
             (verify.valid ? (
-              <span className="rounded-md bg-allow/15 px-2 py-1 text-xs font-bold text-allow">✓ Chain intact ({verify.rows} rows)</span>
+              <span className="inline-flex items-center gap-1 text-xs font-medium text-allow">
+                <ShieldCheck size={13} /> Intact, {verify.rows} rows
+              </span>
             ) : (
-              <span className="rounded-md bg-deny/20 px-2 py-1 text-xs font-bold text-deny">✕ Tampered at row #{verify.broken_at}</span>
+              <span className="inline-flex items-center gap-1 text-xs font-medium text-deny">
+                <ShieldAlert size={13} /> Broken at row #{verify.broken_at}
+              </span>
             ))}
-          <button className="btn btn-ghost px-2.5 py-1 text-xs" disabled={busy} onClick={doVerify}>
-            Verify
-          </button>
           {config?.tamper_demo && (
-            <button className="btn px-2.5 py-1 text-xs border border-deny/60 text-deny hover:bg-deny/10" disabled={busy || rows.length === 0} onClick={doTamper}>
-              Tamper
+            <button className="btn btn-sm btn-ghost text-deny hover:text-deny" disabled={busy || rows.length === 0} onClick={doTamper}>
+              <PencilLine size={13} /> Tamper
             </button>
           )}
+          <button className="btn btn-sm btn-outline" disabled={busy} onClick={doVerify}>
+            Verify
+          </button>
         </span>
       </div>
-      <div ref={listRef} className="relative flex-1 overflow-y-auto px-4 pb-3 font-mono text-[11.5px]">
-        {shown.length === 0 && <p className="pt-6 text-center font-sans text-sm text-muted">No audit rows yet.</p>}
-        {shown.map((r, i) => {
+      <div ref={listRef} className="relative flex-1 overflow-y-auto py-1 font-mono text-[11.5px]">
+        {shown.length === 0 && <EmptyState Icon={Link2} title="No audit rows yet" />}
+        {shown.map((r) => {
           const isBroken = r.seq === broken;
           const isTampered = r.seq === tampered;
           return (
-            <div key={r.seq} data-seq={r.seq} className="relative pl-5">
-              {i < shown.length - 1 && <span className={`absolute left-[7px] top-4 h-full w-px ${isBroken ? "bg-deny" : "bg-zinc-700"}`} />}
-              <span className={`absolute left-[3px] top-[7px] h-2.5 w-2.5 rounded-full ${isBroken ? "bg-deny" : "bg-zinc-500"}`} />
-              <div className={`flex items-center gap-3 rounded px-1.5 py-1 ${isBroken ? "bg-red-950/60 text-red-200" : isTampered ? "bg-amber-950/30" : ""}`}>
-                <span className="w-9 text-zinc-500">#{r.seq}</span>
-                <span className="w-32 truncate text-zinc-200">{r.event_type}</span>
-                <span className="text-zinc-400" title={r.hash}>
-                  {short(r.hash)}
-                </span>
-                <span className="hidden text-zinc-600 2xl:inline" title={r.prev_hash}>
-                  ← {short(r.prev_hash)}
-                </span>
-                {isTampered && <span className="ml-auto font-sans text-[10px] font-bold text-approve">EDITED</span>}
-              </div>
+            <div
+              key={r.seq}
+              data-seq={r.seq}
+              className={`flex items-center gap-4 px-4 py-1 ${isBroken ? "bg-deny-bg text-deny" : isTampered ? "bg-warn-bg" : "hover:bg-subtle"}`}
+            >
+              <span className={`w-10 tabular-nums ${isBroken ? "" : "text-fg-subtle"}`}>#{r.seq}</span>
+              <span className={`w-32 truncate ${isBroken ? "" : "text-fg"}`}>{r.event_type}</span>
+              <span className={isBroken ? "" : "text-fg-muted"} title={r.hash}>
+                {short(r.hash)}
+              </span>
+              <span className="hidden text-fg-subtle 2xl:inline" title={r.prev_hash}>
+                prev {short(r.prev_hash)}
+              </span>
+              {isTampered && <span className="ml-auto font-sans text-[11px] font-medium text-warn">Edited</span>}
             </div>
           );
         })}

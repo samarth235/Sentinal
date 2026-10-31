@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AuditPanel } from "./components/AuditPanel";
 import { CompareCards, type ComparePair } from "./components/CompareCards";
 import { ContextPanel } from "./components/ContextPanel";
@@ -6,7 +6,7 @@ import { ControlBar } from "./components/ControlBar";
 import { DamagePanel } from "./components/DamagePanel";
 import { DecisionFeed } from "./components/DecisionFeed";
 import { DecisionGraph } from "./components/DecisionGraph";
-import { Toasts, type Toast } from "./components/Toasts";
+import { notifyToast, Toasts, type ToastTone } from "./components/Toasts";
 import { api } from "./lib/api";
 import { decisionsOf, evidenceOf, latestWithEvidence } from "./lib/derive";
 import { connect, useStore, waitForFinish } from "./lib/store";
@@ -26,14 +26,20 @@ export default function App() {
   const [outbox, setOutbox] = useState<OutboxEmail[]>([]);
   const [ledger, setLedger] = useState<LedgerPayment[]>([]);
   const [auditRows, setAuditRows] = useState<AuditRow[]>([]);
-  const [toasts, setToasts] = useState<Toast[]>([]);
-  const toastId = useRef(0);
+  const [dark, setDark] = useState(() => document.documentElement.classList.contains("dark"));
 
-  const notify = useCallback((text: string, tone: Toast["tone"] = "info") => {
-    const id = ++toastId.current;
-    setToasts((t) => [...t, { id, text, tone }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), tone === "error" ? 6000 : 4000);
-  }, []);
+  const toggleDark = () => {
+    const next = !dark;
+    setDark(next);
+    document.documentElement.classList.toggle("dark", next);
+    try {
+      localStorage.setItem("sentinel-theme", next ? "dark" : "light");
+    } catch {
+      // Storage can be unavailable (private mode); the toggle still works for this page.
+    }
+  };
+
+  const notify = useCallback((text: string, tone: ToastTone = "info") => notifyToast(text, tone), []);
 
   const loadStatic = useCallback(() => {
     api.scenarios().then(setScenarios).catch(() => notify("Cannot reach the Sentinel API. Is the backend running?", "error"));
@@ -142,6 +148,8 @@ export default function App() {
         busy={busy}
         connected={store.connected}
         config={config}
+        dark={dark}
+        toggleDark={toggleDark}
         onRun={onRun}
         onBeforeAfter={onBeforeAfter}
         onReset={onReset}
@@ -150,7 +158,8 @@ export default function App() {
       {pair && <CompareCards pair={pair} runs={store.runs} outbox={outbox} ledger={ledger} onClose={() => setPair(null)} />}
 
       {recentRuns.length > 0 && (
-        <nav className="mx-5 mt-3 flex flex-wrap gap-2">
+        <nav className="mx-5 mt-4 flex flex-wrap items-center gap-1.5">
+          <span className="mr-1 text-xs text-fg-subtle">Runs</span>
           {recentRuns.map((id) => {
             const r = store.runs[id];
             const active = id === runId;
@@ -161,12 +170,12 @@ export default function App() {
                   setSelectedRun(id);
                   setSelectedDecision(undefined);
                 }}
-                className={`flex items-center gap-2 rounded-lg border px-3 py-1 text-xs font-semibold ${active ? "border-zinc-300 bg-zinc-800" : "border-line text-muted hover:text-zinc-200"}`}
+                className={`flex h-7 items-center gap-2 rounded-md border px-2.5 text-xs ${active ? "border-line-strong bg-surface text-fg shadow-sm" : "border-transparent text-fg-muted hover:bg-subtle hover:text-fg"}`}
               >
-                <span>{r.scenario_id.split("_")[0] || "run"}</span>
-                <span className={r.shield ? "text-allow" : "text-deny"}>{r.shield ? "ON" : "OFF"}</span>
-                {!r.summary && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-approve" />}
-                {r.summary?.attack_succeeded && <span className="text-deny">breached</span>}
+                <span className="font-mono font-medium">{r.scenario_id.split("_")[0] || "run"}</span>
+                <span className="text-fg-subtle">shield {r.shield ? "on" : "off"}</span>
+                {!r.summary && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-warn-solid" />}
+                {r.summary?.attack_succeeded && <span className="font-medium text-deny">breached</span>}
               </button>
             );
           })}
@@ -175,16 +184,16 @@ export default function App() {
 
       <main className="mx-5 mt-3 grid h-[max(420px,calc(100vh-430px))] grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_minmax(0,1fr)] gap-3">
         <ContextPanel run={run} evidence={evidence} />
-        <DecisionGraph run={run} selectedId={effectiveDecisionId} onSelect={setSelectedDecision} />
+        <DecisionGraph run={run} selectedId={effectiveDecisionId} onSelect={setSelectedDecision} dark={dark} />
         <DecisionFeed run={run} selectedId={effectiveDecisionId} onSelect={setSelectedDecision} timeoutSeconds={config?.approval_timeout_seconds ?? 60} notify={(m) => notify(m, "error")} />
       </main>
 
-      <footer className="mx-5 my-3 grid h-60 grid-cols-2 gap-3">
+      <footer className="mx-5 mb-5 mt-3 grid h-60 grid-cols-2 gap-3">
         <DamagePanel outbox={outbox} ledger={ledger} />
         <AuditPanel rows={auditRows} config={config} onChanged={refreshDamage} notify={notify} />
       </footer>
 
-      <Toasts toasts={toasts} dismiss={(id) => setToasts((t) => t.filter((x) => x.id !== id))} />
+      <Toasts dark={dark} />
     </div>
   );
 }

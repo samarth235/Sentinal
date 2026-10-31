@@ -1,4 +1,6 @@
+import { Mail, Wallet } from "lucide-react";
 import { useState } from "react";
+import { EmptyState } from "./ui";
 import { formatArg, maskText } from "../lib/mask";
 import type { LedgerPayment, OutboxEmail } from "../lib/types";
 
@@ -9,40 +11,40 @@ export function DamagePanel({ outbox, ledger }: { outbox: OutboxEmail[]; ledger:
   const bad = outbox.filter((e) => !e.to.toLowerCase().endsWith(`@${TRUSTED_DOMAIN}`)).length + ledger.length;
   return (
     <section className="panel">
-      <div className="panel-title">
+      <div className="panel-head">
         <span className="flex items-center gap-2">
-          Damage
-          {bad > 0 && <span className="rounded bg-deny px-1.5 py-0.5 text-[10px] font-bold text-white normal-case tracking-normal">{bad} harmful</span>}
+          <span className="panel-title">Side effects</span>
+          {bad > 0 && <span className="rounded border border-deny-line bg-deny-bg px-1.5 text-[11px] font-medium leading-5 text-deny">{bad} harmful</span>}
         </span>
-        <span className="flex gap-1 normal-case tracking-normal">
+        <span className="flex h-7 rounded-md border border-line bg-subtle p-0.5">
           {(["outbox", "ledger"] as const).map((t) => (
-            <button key={t} onClick={() => setTab(t)} className={`rounded px-2 py-0.5 text-xs font-semibold ${tab === t ? "bg-zinc-200 text-black" : "text-muted hover:text-zinc-200"}`}>
-              {t === "outbox" ? `Outbox (${outbox.length})` : `Ledger (${ledger.length})`}
+            <button key={t} onClick={() => setTab(t)} className={`rounded-[5px] px-2.5 text-xs ${tab === t ? "bg-surface text-fg shadow-sm" : "text-fg-muted hover:text-fg"}`}>
+              {t === "outbox" ? "Outbox" : "Ledger"} <span className="text-fg-subtle tabular-nums">{t === "outbox" ? outbox.length : ledger.length}</span>
             </button>
           ))}
         </span>
       </div>
-      <div className="flex-1 overflow-y-auto px-4 pb-3">
+      <div className="flex-1 overflow-y-auto">
         {tab === "outbox" ? (
           outbox.length === 0 ? (
-            <p className="pt-6 text-center text-sm text-muted">Outbox empty — no emails sent.</p>
+            <EmptyState Icon={Mail} title="Outbox empty" hint="No emails sent." />
           ) : (
             <table className="w-full text-left text-[12.5px]">
-              <thead className="text-[11px] uppercase text-muted">
+              <thead className="sticky top-0 bg-surface text-xs text-fg-subtle">
                 <tr>
-                  <th className="py-1 pr-2 font-semibold">To</th>
-                  <th className="py-1 pr-2 font-semibold">Subject</th>
-                  <th className="py-1 font-semibold">Body</th>
+                  <th className="border-b border-line py-2 pl-4 pr-3 font-medium">To</th>
+                  <th className="border-b border-line py-2 pr-3 font-medium">Subject</th>
+                  <th className="border-b border-line py-2 pr-4 font-medium">Body</th>
                 </tr>
               </thead>
               <tbody>
                 {[...outbox].reverse().map((e) => {
                   const attacker = !e.to.toLowerCase().endsWith(`@${TRUSTED_DOMAIN}`);
                   return (
-                    <tr key={e.id} className={`border-t border-line ${attacker ? "bg-red-950/40 text-red-100" : ""}`}>
-                      <td className={`py-1.5 pr-2 font-mono font-semibold ${attacker ? "text-deny" : ""}`}>{e.to}</td>
-                      <td className="py-1.5 pr-2">{e.subject}</td>
-                      <td className="py-1.5 font-mono text-[11.5px] text-zinc-400">{formatArg(maskText(e.body), 90)}</td>
+                    <tr key={e.id} className={`border-b border-line ${attacker ? "bg-deny-bg" : ""}`}>
+                      <td className={`py-2 pl-4 pr-3 font-mono ${attacker ? "font-medium text-deny" : ""}`}>{e.to}</td>
+                      <td className="py-2 pr-3">{e.subject}</td>
+                      <td className="py-2 pr-4 font-mono text-[11.5px] text-fg-muted">{formatArg(maskText(e.body), 90)}</td>
                     </tr>
                   );
                 })}
@@ -50,22 +52,22 @@ export function DamagePanel({ outbox, ledger }: { outbox: OutboxEmail[]; ledger:
             </table>
           )
         ) : ledger.length === 0 ? (
-          <p className="pt-6 text-center text-sm text-muted">Ledger empty — no money moved.</p>
+          <EmptyState Icon={Wallet} title="Ledger empty" hint="No money moved." />
         ) : (
           <table className="w-full text-left text-[12.5px]">
-            <thead className="text-[11px] uppercase text-muted">
+            <thead className="sticky top-0 bg-surface text-xs text-fg-subtle">
               <tr>
-                <th className="py-1 pr-2 font-semibold">Payee</th>
-                <th className="py-1 pr-2 font-semibold">Amount</th>
-                <th className="py-1 font-semibold">Note</th>
+                <th className="border-b border-line py-2 pl-4 pr-3 font-medium">Payee</th>
+                <th className="border-b border-line py-2 pr-3 font-medium">Amount</th>
+                <th className="border-b border-line py-2 pr-4 font-medium">Note</th>
               </tr>
             </thead>
             <tbody>
               {[...ledger].reverse().map((p) => (
-                <tr key={p.id} className="border-t border-line bg-red-950/40 text-red-100">
-                  <td className="py-1.5 pr-2 font-mono font-semibold text-deny">{p.payee}</td>
-                  <td className="py-1.5 pr-2 font-semibold">₹{p.amount_inr.toLocaleString("en-IN")}</td>
-                  <td className="py-1.5 text-zinc-400">{p.note}</td>
+                <tr key={p.id} className="border-b border-line bg-deny-bg">
+                  <td className="py-2 pl-4 pr-3 font-mono font-medium text-deny">{p.payee}</td>
+                  <td className="py-2 pr-3 font-medium tabular-nums">₹{p.amount_inr.toLocaleString("en-IN")}</td>
+                  <td className="py-2 pr-4 text-fg-muted">{p.note}</td>
                 </tr>
               ))}
             </tbody>
