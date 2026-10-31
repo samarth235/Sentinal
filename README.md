@@ -1,7 +1,6 @@
-# Sentinal
+# Sentinel
 
-Sentinel is a policy-enforcement gateway between an AI agent and its tools (PARALLAX hackathon, AgentShield track).
-It intercepts every tool call, traces each high-impact argument back to either the user's request or untrusted
+Sentinel is a policy-enforcement gateway between an AI agent and its tools.It intercepts every tool call, traces each high-impact argument back to either the user's request or untrusted
 content the agent read, and decides **ALLOW / DENY / REQUIRE_APPROVAL** with plain-English reasons and evidence spans.
 
 All data is synthetic. Nothing is really emailed or paid; every domain uses `.test`.
