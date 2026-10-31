@@ -43,11 +43,11 @@ giving them an entry (impact, `args_schema`, `result_trust`) in `backend/src/pol
 
 | Area | What it does |
 |---|---|
-| Policy engine | Deterministic rules R0–R10, first DENY wins, fails closed on any error. Policy hash recorded on every decision. |
+| Policy engine | Deterministic rules R0–R10, first DENY wins, fails closed on any error. The policy file's hash is recorded on every run and decision; replay reads the file without installing it. |
 | Provenance + taint | Recipient/payee/amount must come from the user, not from content the agent read; evidence points at the hidden sentence. |
 | Guard | Groq classifier as a second opinion (can only escalate). Heuristic fallback, refused in production unless allowed. |
 | Agent API (`/api/v1`) | Sessions, context, tool-call checks (wait or poll for approval), result reporting, per-agent keys. |
-| Human in the loop | Telegram Approve/Reject, DENY alerts, `/status` `/pending` `/verify` `/replay` `/trace` `/override`, retries, webhook mode. |
+| Human in the loop | Telegram Approve/Reject, an alert for every blocked call, `/status` `/pending` `/verify` `/replay` `/trace`, send retries, webhook mode. |
 | Audit | Hash chain in Postgres (advisory-locked) or JSONL; scheduled verification, truncation detection, head anchors posted to Telegram, append-only DB role script. |
 | Forensics | "Every action influenced by this page/email" (`/api/forensics`, dashboard **Trace**, Telegram `/trace`). |
 | Privacy | PAN, phone, Aadhaar, Luhn-valid cards, account numbers and API keys masked before the log, socket, Telegram or any response. |
@@ -56,14 +56,37 @@ giving them an entry (impact, `args_schema`, `result_trust`) in `backend/src/pol
 ## Deploy
 
 Step-by-step (Neon + Railway + Vercel + Telegram + Groq): **[docs/DEPLOY.md](docs/DEPLOY.md)**.
-Self-hosted: `cp docker.env.example .env && docker compose up -d --build`.
+Self-hosted: `API_TOKEN=admin:$(openssl rand -hex 24) docker compose up -d --build` (Postgres, API on `:4000`,
+dashboard on `:8080`). CI (`.github/workflows/ci.yml`) typechecks, tests against Postgres and builds all three packages.
 
 ## Configuration
 
-All settings are documented in [`backend/.env.example`](backend/.env.example). Production (`NODE_ENV=production`)
-refuses to start without a 24+ character `API_TOKEN`, with the tamper demo on outside a demo deployment, or with the
-regex guard unless `ALLOW_HEURISTIC_GUARD=true`. Demo features (scenarios, shield OFF, reset) are off in production
-unless `ENABLE_DEMO_FEATURES=true`.
+All settings are documented in [`backend/.env.example`](backend/.env.example).
+
+- `NODE_ENV=production` refuses to start without a 24+ character `API_TOKEN`.
+- `SENTINEL_MODE=production` is strict mode for a real deployment: it also requires the Groq guard, forbids
+  `ENABLE_TAMPER_DEMO`, and rejects shield-off runs and `/api/reset` (403). The default, `demo`, keeps the
+  before/after demo available.
+- `APPROVAL_TIMEOUT_SECONDS` overrides `defaults.approval_timeout_seconds` in `policy.yaml`.
+
+## Telegram commands
+
+Only `TELEGRAM_ALLOWED_CHAT_ID` (and, if set, `TELEGRAM_ALLOWED_USER_IDS`) is answered. Commands are read-only:
+nothing loosens policy from chat by default.
+
+| Command | |
+|---|---|
+| inline Approve / Reject | resolves a pending approval (the message is edited on approve, reject or timeout) |
+| `/status` | pending approvals, audit-chain verification, policy, latency, last 5 decisions |
+| `/pending` | pending approvals |
+| `/verify` | audit-chain verification |
+| `/replay <decision_id>` | re-evaluate against the current policy file; nothing executes (works after restarts) |
+| `/trace <url or text>` | every action influenced by that source |
+| (automatic) | an alert for every blocked call, with masked args and the evidence excerpt; audit-chain alerts and hourly head-hash anchors |
+
+`/override <profile> <tool> <minutes>` exists but is **off by default** (`TELEGRAM_ENABLE_OVERRIDE=true` to opt in;
+needs `TELEGRAM_ALLOWED_USER_IDS`, refused in production mode). A chat command that loosens policy makes the approval
+channel an attack surface, so the recommended way to change permissions is the policy file.
 
 ## API
 
@@ -76,9 +99,9 @@ unless `ENABLE_DEMO_FEATURES=true`.
 | GET | `/api/sessions` | agent sessions |
 | POST | `/api/approvals/:decision_id` | `{ approve }` — approver is the operator token's name |
 | GET | `/api/pending-approvals` · `/api/outbox` · `/api/ledger` | |
-| POST | `/api/replay/:decision_id` | re-evaluate against the current policy (works after restarts) |
+| POST | `/api/replay/:decision_id` | re-evaluate against the policy file as it is now, without installing it; `X-Policy-Hash` / `X-Original-Policy-Hash` headers (works after restarts) |
 | GET | `/api/forensics?q=` · `/api/metrics` | forensics; latency p50/p95, verdict counts, guard health |
-| GET / POST | `/api/policy` · `/api/policy/reload` | current policy + overrides; hot reload (invalid file keeps the old one) |
+| GET / POST | `/api/policy` · `/api/policy/reload` | `{ active_hash, file_hash, changed_since_start, policy }`; deliberate hot reload (an invalid file keeps the old policy) |
 | GET | `/api/audit` · `/api/audit/verify` · `/api/audit/head` | chain rows, verification, head hash |
 | POST | `/api/reset`, `/api/audit/tamper-demo(/restore)` | demo only |
 | * | `/api/v1/...` | agent API, see `sdk/README.md` |

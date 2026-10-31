@@ -116,6 +116,8 @@ function TokenButton() {
 }
 
 export function ControlBar(p: Props) {
+  // Production mode: the server rejects shield-off runs and resets, so the controls are not offered.
+  const demo = p.config?.mode !== "production";
   const current = p.scenarios.find((s) => s.id === p.scenarioId);
   return (
     <header className="border-b border-line bg-surface">
@@ -145,16 +147,15 @@ export function ControlBar(p: Props) {
         </div>
       </div>
 
-      {p.config && p.config.demo_features === false ? (
-        <p className="px-5 py-3 text-[13px] text-fg-muted">
-          Monitoring live agent sessions. Agents connect through the gateway API (<span className="font-mono">/api/v1</span>) with an agent key; their decisions appear below in real time.
-        </p>
-      ) : (
-      <>
       <div className="flex flex-wrap items-center gap-x-5 gap-y-3 px-5 py-3">
         <ScenarioSelect scenarios={p.scenarios} value={p.scenarioId} onChange={p.setScenarioId} />
 
-        <label className="flex items-center gap-2 text-[13px] text-fg-muted">
+        {!demo && (
+          <span className="inline-flex items-center gap-1.5 text-[13px] text-fg-muted">
+            <ShieldCheck size={14} className="text-allow" /> Shield on <span className="text-fg-subtle">(production mode)</span>
+          </span>
+        )}
+        {demo && <label className="flex items-center gap-2 text-[13px] text-fg-muted">
           <Switch.Root
             checked={p.shield}
             onCheckedChange={p.setShield}
@@ -163,7 +164,7 @@ export function ControlBar(p: Props) {
             <Switch.Thumb className="block h-4 w-4 translate-x-0.5 rounded-full bg-white shadow transition-transform data-[state=checked]:translate-x-[18px]" />
           </Switch.Root>
           Shield <span className="w-6 font-medium text-fg">{p.shield ? "on" : "off"}</span>
-        </label>
+        </label>}
 
         <div className="flex items-center gap-2 text-[13px] text-fg-muted">
           Mode
@@ -188,12 +189,16 @@ export function ControlBar(p: Props) {
         </div>
 
         <div className="ml-auto flex items-center gap-2">
-          <button className="btn btn-ghost" disabled={p.busy} onClick={p.onReset}>
-            <RotateCcw size={14} /> Reset
-          </button>
-          <button className="btn btn-outline" disabled={p.busy || !p.connected} onClick={p.onBeforeAfter}>
-            <ArrowLeftRight size={14} /> Compare off / on
-          </button>
+          {demo && (
+            <>
+              <button className="btn btn-ghost" disabled={p.busy} onClick={p.onReset}>
+                <RotateCcw size={14} /> Reset
+              </button>
+              <button className="btn btn-outline" disabled={p.busy || !p.connected} onClick={p.onBeforeAfter}>
+                <ArrowLeftRight size={14} /> Compare off / on
+              </button>
+            </>
+          )}
           <button className="btn btn-primary" disabled={p.busy || !p.connected} onClick={p.onRun}>
             <Play size={14} /> Run
           </button>
@@ -226,8 +231,6 @@ export function ControlBar(p: Props) {
             {current.user_prompt}
           </p>
         )
-      )}
-      </>
       )}
     </header>
   );

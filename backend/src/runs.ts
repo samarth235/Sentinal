@@ -4,7 +4,7 @@ import { ContextLedger } from "./gateway/contextLedger.js";
 import type { GatewayContext } from "./gateway/gateway.js";
 import { bus as defaultBus } from "./integrations/index.js";
 import type { SentinelBus } from "./integrations/bus.js";
-import { getPolicy } from "./policy/loader.js";
+import { activePolicyHash, getPolicy } from "./policy/loader.js";
 import type { Scenario } from "./scenarios.js";
 import { getLedger, getOutbox } from "./tools/state.js";
 
@@ -22,6 +22,8 @@ export interface RunRecord {
   executed: { decision_id: string; tool: string; text: string }[];
   status: "running" | "finished" | "failed";
   error?: string;
+  /** sha256 of the policy file that judged this run's calls. */
+  policy_hash: string;
 }
 
 const runs = new Map<string, RunRecord>();
@@ -40,6 +42,7 @@ export function createRun(scenario: Scenario, shield: boolean, mode: RunMode, bu
     executed: [],
     status: "running",
     last_activity: Date.now(),
+    policy_hash: activePolicyHash(),
   };
   runs.set(run_id, record);
   return record;

@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { parse } from "yaml";
 import { z } from "zod";
-import { canonicalJson } from "../integrations/canonicalJson.js";
 
 const ImpactSchema = z.enum(["low", "medium", "high", "critical"]);
 const TrustSchema = z.enum(["TRUSTED", "UNTRUSTED", "INTERNAL_DATA"]);
@@ -54,16 +53,15 @@ export const PolicySchema = z.object({
 });
 
 export type Policy = z.infer<typeof PolicySchema> & {
-  /** sha256 of the canonical policy (first 12 hex chars). Recorded on every decision. */
+  /** First 12 hex chars of the policy file's sha256 (plus any active overrides). Recorded on every decision. */
   readonly policy_version?: string;
 };
 export type ToolPolicy = z.infer<typeof ToolPolicySchema>;
 
 export class PolicyError extends Error {}
 
-export function policyVersion(p: z.infer<typeof PolicySchema>): string {
-  return createHash("sha256").update(canonicalJson(p)).digest("hex").slice(0, 12);
-}
+/** sha256 of the policy file bytes: identifies exactly which policy produced a decision. */
+export const policyHashOf = (text: string) => createHash("sha256").update(text).digest("hex");
 
 /** Parse + validate policy text. Throws PolicyError on anything invalid (fail closed). */
 export function parsePolicy(text: string): Policy {
@@ -77,7 +75,7 @@ export function parsePolicy(text: string): Policy {
   if (!result.success) {
     throw new PolicyError(`Policy failed validation: ${z.prettifyError(result.error)}`);
   }
-  return { ...result.data, policy_version: policyVersion(result.data) };
+  return { ...result.data, policy_version: policyHashOf(text).slice(0, 12) };
 }
 
 export function loadPolicy(policyPath: string): Policy {
@@ -86,19 +84,45 @@ export function loadPolicy(policyPath: string): Policy {
 
 let current: Policy | null = null;
 let currentPath: string | null = null;
+let currentHash: string | null = null;
 
 /** Load the active policy. Called once at startup; an invalid policy throws and the server refuses to start. */
 export function initPolicy(policyPath: string): Policy {
-  current = loadPolicy(policyPath);
+  const text = fs.readFileSync(policyPath, "utf8");
+  current = parsePolicy(text);
   currentPath = policyPath;
+  currentHash = policyHashOf(text);
   return current;
 }
 
-/** Re-read the policy file (hot reload, also used by replay). Keeps the old policy if the new one is invalid. */
-export function reloadPolicy(): Policy {
+/**
+ * Read the policy file as it is now, WITHOUT installing it (used by replay). Live runs keep the
+ * installed policy, so a replay can never change enforcement as a side effect.
+ */
+export function readPolicyFile(): { policy: Policy; hash: string } {
   if (!currentPath) throw new PolicyError("Policy not initialised");
-  current = loadPolicy(currentPath);
+  const text = fs.readFileSync(currentPath, "utf8");
+  return { policy: parsePolicy(text), hash: policyHashOf(text) };
+}
+
+/** Deliberate hot reload (POST /api/policy/reload): install the file on disk. An invalid file keeps the old policy. */
+export function reloadPolicy(): Policy {
+  const { policy, hash } = readPolicyFile();
+  current = policy;
+  currentHash = hash;
   return getPolicy();
+}
+
+/** Hash of the policy file currently enforced by live runs. */
+export function activePolicyHash(): string {
+  if (!currentHash) throw new PolicyError("Policy not initialised");
+  return currentHash;
+}
+
+/** Approval timeout: APPROVAL_TIMEOUT_SECONDS if set, else the policy default. */
+export function approvalTimeoutSeconds(override: number | null | undefined): number {
+  if (override && override > 0) return override;
+  return getPolicy().defaults.approval_timeout_seconds;
 }
 
 // ---------------------------------------------------------------------------

@@ -12,19 +12,26 @@ import type { BusEvent, Decision } from "../src/types.js";
 beforeAll(() => initPolicy("./src/policy/policy.yaml"));
 
 describe("startup config checks", () => {
-  const prod = { ...config, production: true, operatorTokens: parseTokens("alice:" + "x".repeat(30), "operator"), agentKeys: [], groqApiKey: "", groqModel: "", allowHeuristicGuard: false, enableTamperDemo: false, demoFeatures: false, databaseUrl: "postgres://x" };
+  const prod = { ...config, production: true, strict: false, operatorTokens: parseTokens("alice:" + "x".repeat(30), "operator"), agentKeys: [], groqApiKey: "", groqModel: "", enableTamperDemo: false, databaseUrl: "postgres://x", telegramWebhookUrl: "" };
 
   it("parses named tokens", () => {
     expect(parseTokens("alice:aaa,bbb", "operator")).toEqual([{ name: "alice", token: "aaa" }, { name: "operator", token: "bbb" }]);
   });
 
-  it("refuses production without a token, with short tokens, or with a silent regex guard", () => {
+  it("refuses a deployment without a token or with short tokens", () => {
     expect(validateConfig({ ...prod, operatorTokens: [] }).errors.join()).toMatch(/requires API_TOKEN/);
+    expect(validateConfig({ ...prod, production: false, strict: true, operatorTokens: [], groqApiKey: "k", groqModel: "m" }).errors.join()).toMatch(/requires API_TOKEN/);
     expect(validateConfig({ ...prod, operatorTokens: parseTokens("short", "op") }).errors.join()).toMatch(/at least 24/);
-    expect(validateConfig(prod).errors.join()).toMatch(/GROQ_API_KEY/);
-    expect(validateConfig({ ...prod, allowHeuristicGuard: true }).errors).toEqual([]);
-    expect(validateConfig({ ...prod, allowHeuristicGuard: true, enableTamperDemo: true }).errors.join()).toMatch(/ENABLE_TAMPER_DEMO/);
-    expect(validateConfig({ ...prod, allowHeuristicGuard: true, agentKeys: prod.operatorTokens }).errors.join()).toMatch(/reuse/);
+    expect(validateConfig({ ...prod, agentKeys: prod.operatorTokens }).errors.join()).toMatch(/reuse/);
+  });
+
+  it("demo mode in production starts (with a warning); strict mode needs Groq and no tamper demo", () => {
+    expect(validateConfig(prod).errors).toEqual([]);
+    expect(validateConfig(prod).warnings.join()).toMatch(/SENTINEL_MODE=demo/);
+    expect(validateConfig({ ...prod, strict: true }).errors.join()).toMatch(/Groq/);
+    expect(validateConfig({ ...prod, strict: true, groqApiKey: "k", groqModel: "m" }).errors).toEqual([]);
+    expect(validateConfig({ ...prod, strict: true, groqApiKey: "k", groqModel: "m", enableTamperDemo: true }).errors.join()).toMatch(/TAMPER/);
+    expect(validateConfig({ ...prod, telegramWebhookUrl: "https://x.test" }).errors.join()).toMatch(/WEBHOOK_SECRET/);
   });
 });
 

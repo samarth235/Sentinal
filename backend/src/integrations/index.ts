@@ -6,7 +6,7 @@ import { HeuristicGuard, type GuardProvider } from "./guard.js";
 import { GroqGuard } from "./groqGuard.js";
 import { HashChainAuditSink, MemoryChainStore } from "./hashChain.js";
 import { createPostgresAudit } from "./postgresAudit.js";
-import { getPolicy } from "../policy/loader.js";
+import { approvalTimeoutSeconds as policyTimeout } from "../policy/loader.js";
 
 export interface Providers {
   guard: GuardProvider;
@@ -16,11 +16,10 @@ export interface Providers {
 
 /** APPROVAL_TIMEOUT_SECONDS if set, otherwise the policy's defaults.approval_timeout_seconds. */
 export function approvalTimeoutSeconds(): number {
-  if (config.approvalTimeoutOverride && config.approvalTimeoutOverride > 0) return config.approvalTimeoutOverride;
   try {
-    return getPolicy().defaults.approval_timeout_seconds;
+    return policyTimeout(config.approvalTimeoutOverride);
   } catch {
-    return 60;
+    return config.approvalTimeoutOverride ?? 60;
   }
 }
 

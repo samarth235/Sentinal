@@ -6,23 +6,20 @@ import { z } from "zod";
 import { config, validateConfig, VERSION } from "./config.js";
 import { runLive } from "./agent/agentLoop.js";
 import { runScripted } from "./agent/scriptedRun.js";
-import { evaluate } from "./gateway/policyEngine.js";
-import type { ContextLedger } from "./gateway/contextLedger.js";
-import { decisionsFromAudit, forensics, ledgerFromAudit, metricsFor, unresolvedApprovals } from "./history.js";
+import { decisionsFromAudit, forensics, metricsFor, unresolvedApprovals } from "./history.js";
 import { errorHandler, requireAgentKey, requireJson, requireToken } from "./http.js";
 import { startAuditMonitor } from "./integrations/auditMonitor.js";
-import { safeClassify, NOT_CONSULTED } from "./integrations/guard.js";
 import { approvalTimeoutSeconds, auditChain, bus, httpApprovals, providers } from "./integrations/index.js";
 import { maskDeep } from "./integrations/masking.js";
 import { attachSocketBridge } from "./integrations/socketBridge.js";
 import { startTelegramBot } from "./integrations/telegramBot.js";
-import { activeOverrides, addOverride, clearOverrides, getPolicy, initPolicy, MAX_OVERRIDE_MINUTES, PolicyError, reloadPolicy } from "./policy/loader.js";
+import { activeOverrides, activePolicyHash, addOverride, clearOverrides, getPolicy, initPolicy, MAX_OVERRIDE_MINUTES, PolicyError, readPolicyFile, reloadPolicy } from "./policy/loader.js";
+import { replayDecision } from "./replay.js";
 import { auditRoutes } from "./routes/audit.js";
 import { v1Routes } from "./routes/v1.js";
-import { allDecisions, clearRuns, createRun, findDecision, getRun, listRuns, pruneRuns, summarize } from "./runs.js";
+import { allDecisions, clearRuns, createRun, getRun, listRuns, pruneRuns, summarize } from "./runs.js";
 import { getScenario, scenarios } from "./scenarios.js";
 import { getLedger, getOutbox, reset } from "./tools/state.js";
-import type { Decision } from "./types.js";
 
 
 // ---------------------------------------------------------------------------
@@ -45,7 +42,7 @@ export const app = express();
 if (config.trustProxy) app.set("trust proxy", /^\d+$/.test(config.trustProxy) ? Number(config.trustProxy) : config.trustProxy);
 app.disable("x-powered-by");
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" }, contentSecurityPolicy: false }));
-app.use(cors({ origin: config.frontendOrigins }));
+app.use(cors({ origin: config.frontendOrigins, exposedHeaders: ["X-Policy-Hash", "X-Original-Policy-Hash"] }));
 app.use(
   "/api",
   rateLimit({
@@ -65,8 +62,9 @@ let bridge: ReturnType<typeof attachSocketBridge> | undefined;
 let telegram: ReturnType<typeof startTelegramBot> | undefined;
 let monitor: ReturnType<typeof startAuditMonitor> | undefined;
 
-const demoOnly: express.RequestHandler = (_req, res, next) => {
-  if (!config.demoFeatures) return void res.status(403).json({ error: "demo features are disabled on this deployment (ENABLE_DEMO_FEATURES)" });
+/** SENTINEL_MODE=production: demo-only routes are refused. */
+const notInStrictMode: express.RequestHandler = (req, res, next) => {
+  if (config.strict) return void res.status(403).json({ error: `${req.path.replace("/api/", "")} is disabled in production mode` });
   next();
 };
 
@@ -110,9 +108,10 @@ app.get("/api/scenarios", (_req, res) => {
   res.json(scenarios.map(({ id, title, profile, user_prompt }) => ({ id, title, profile, user_prompt })));
 });
 
-app.post("/api/runs", demoOnly, (req, res) => {
+app.post("/api/runs", (req, res) => {
   const body = RunBody.safeParse(req.body);
   if (!body.success) return void res.status(400).json({ error: z.prettifyError(body.error) });
+  if (config.strict && !body.data.shield) return void res.status(403).json({ error: "shield cannot be turned off in production mode" });
   const base = getScenario(body.data.scenario_id);
   if (!base) return void res.status(404).json({ error: `unknown scenario ${body.data.scenario_id}` });
   if (body.data.user_prompt && body.data.mode !== "live") return void res.status(400).json({ error: "a custom user_prompt needs live mode" });
@@ -127,7 +126,7 @@ app.post("/api/runs", demoOnly, (req, res) => {
 app.get("/api/runs/:run_id", (req, res) => {
   const run = getRun(req.params.run_id);
   if (!run) return void res.status(404).json({ error: "unknown run" });
-  res.json(maskDeep({ ...summarize(run), status: run.status, error: run.error, mode: run.mode, title: run.scenario.title }));
+  res.json(maskDeep({ ...summarize(run), status: run.status, error: run.error, mode: run.mode, title: run.scenario.title, policy_hash: run.policy_hash }));
 });
 
 /** Active and recent agent sessions (SDK / REST gateway users). */
@@ -225,7 +224,7 @@ app.get("/api/ledger", (_req, res) => {
   res.json(maskDeep(getLedger()));
 });
 
-app.post("/api/reset", demoOnly, (_req, res) => {
+app.post("/api/reset", notInStrictMode, (_req, res) => {
   httpApprovals.rejectAll();
   reset();
   clearRuns();
@@ -236,8 +235,28 @@ app.post("/api/reset", demoOnly, (_req, res) => {
 // ---------------------------------------------------------------------------
 // Policy
 // ---------------------------------------------------------------------------
-app.get("/api/policy", (_req, res) => {
-  res.json({ policy: getPolicy(), overrides: activeOverrides() });
+/** Which policy live runs enforce, whether the file on disk has changed since it was loaded, and active overrides. */
+app.get("/api/policy", (_req, res, next) => {
+  try {
+    let fileHash: string | null = null;
+    let fileError: string | undefined;
+    try {
+      fileHash = readPolicyFile().hash;
+    } catch (err) {
+      if (!(err instanceof PolicyError)) throw err;
+      fileError = err.message;
+    }
+    res.json({
+      active_hash: activePolicyHash(),
+      file_hash: fileHash,
+      changed_since_start: fileHash !== activePolicyHash(),
+      ...(fileError ? { error: fileError } : {}),
+      policy: getPolicy(),
+      overrides: activeOverrides(),
+    });
+  } catch (err) {
+    next(err);
+  }
 });
 
 app.post("/api/policy/reload", async (_req, res) => {
@@ -250,43 +269,23 @@ app.post("/api/policy/reload", async (_req, res) => {
   }
 });
 
-/** Re-evaluate a stored call against the CURRENT policy with the context the agent had at the time. No execution. */
-async function replayDecision(decisionId: string): Promise<{ decision: Decision; original: Decision; reconstructed: boolean }> {
-  const found = findDecision(decisionId);
-  let ledger: ContextLedger;
-  let original: Decision;
-  let reconstructed = false;
-  if (found) {
-    ledger = found.run.ledger.snapshot(found.ledgerSize);
-    original = found.decision;
-  } else {
-    const fromAudit = ledgerFromAudit(await auditChain.list(), decisionId);
-    if (!fromAudit) throw Object.assign(new Error("unknown decision"), { status: 404 });
-    ({ ledger, decision: original } = fromAudit);
-    reconstructed = true; // rebuilt from the (masked) audit log after a restart
-  }
-  const policy = reloadPolicy();
-  const t0 = performance.now();
-  const guard = ledger.isTainted() ? await safeClassify(providers.guard, { call: original.call, untrustedText: ledger.untrustedText() }, config.guardTimeoutMs + 250) : NOT_CONSULTED;
-  const decision = evaluate(original.call, ledger, policy, guard);
-  decision.latency_ms = Math.round((performance.now() - t0) * 100) / 100;
-  return { decision, original, reconstructed };
-}
-
-app.post("/api/replay/:decision_id", async (req, res) => {
+/** Re-evaluate a stored call against the CURRENT policy file. No execution; the live policy is untouched. */
+app.post("/api/replay/:decision_id", async (req, res, next) => {
   try {
-    const { decision, reconstructed } = await replayDecision(req.params.decision_id);
-    res.json(maskDeep({ ...decision, reconstructed }));
+    const result = await replayDecision(req.params.decision_id);
+    if (!result) return void res.status(404).json({ error: "unknown decision" });
+    res.set("X-Policy-Hash", result.policy_hash).set("X-Original-Policy-Hash", result.original_policy_hash);
+    res.json(maskDeep({ ...result.decision, reconstructed: result.reconstructed }));
   } catch (err) {
-    const e = err as { status?: number; message: string };
-    res.status(e.status ?? (err instanceof PolicyError ? 422 : 500)).json({ error: e.message });
+    if (err instanceof PolicyError) return void res.status(422).json({ error: err.message });
+    next(err);
   }
 });
 
 // ---------------------------------------------------------------------------
 // Gateway API for external agents, audit routes
 // ---------------------------------------------------------------------------
-app.use(v1Routes({ bus, demoFeatures: config.demoFeatures }));
+app.use(v1Routes({ bus, demoFeatures: !config.strict }));
 
 app.use(
   auditRoutes(() => auditChain, {
@@ -299,7 +298,7 @@ app.use(
       telegram_mode: telegram?.health.mode ?? null,
       telegram_error: telegram?.health.last_error ?? null,
       auth_required: config.operatorTokens.length > 0,
-      demo_features: config.demoFeatures,
+      mode: config.strict ? "production" : "demo",
       live_mode: Boolean(config.anthropicApiKey),
       real_browse: config.enableRealBrowse,
       policy_version: getPolicy().policy_version,
@@ -310,8 +309,6 @@ app.use(
 // ---------------------------------------------------------------------------
 // Telegram
 // ---------------------------------------------------------------------------
-const fmtDecision = (d: Decision) => `${d.verdict} (${d.rule_id}) ${d.call.tool} — ${d.reasons.map((r) => r.message).join(" ")}`;
-
 if (config.telegramBotToken && config.telegramAllowedChatId) {
   telegram = startTelegramBot({
     token: config.telegramBotToken,
@@ -321,56 +318,41 @@ if (config.telegramBotToken && config.telegramAllowedChatId) {
     bus,
     resolve: (id, approve, approver) => httpApprovals.resolve(id, approve, approver),
     pending: () => httpApprovals.list(),
+    recent: () => allDecisions().slice(-5),
+    verify: () => auditChain.verify(),
+    replay: replayDecision,
     notifyDeny: config.telegramNotifyDeny,
     webhookUrl: config.telegramWebhookUrl || undefined,
     webhookSecret: config.telegramWebhookSecret || undefined,
-    commands: {
-      status: async () => {
-        const rows = await auditChain.list();
-        const m = metricsFor(decisionsFromAudit(rows));
-        const v = await auditChain.verify();
-        const recent = decisionsFromAudit(rows, { limit: 5 }).reverse();
-        return maskDeep(
-          [
-            `🛡 Sentinel ${VERSION} — policy ${getPolicy().policy_version}`,
-            `Decisions: ${m.decisions} (${Object.entries(m.by_verdict).map(([k, n]) => `${k} ${n}`).join(", ") || "none"})`,
-            `Latency p50/p95: ${m.latency_ms.p50 ?? "-"} / ${m.latency_ms.p95 ?? "-"} ms`,
-            `Pending approvals: ${httpApprovals.list().length}`,
-            `Audit chain: ${v.valid ? `intact (${v.rows} rows)` : `BROKEN at #${v.broken_at}`} [${auditChain.store.kind}]`,
-            `Guard: ${providers.guard.constructor.name}   Overrides active: ${activeOverrides().length}`,
-            recent.length ? `\nRecent:\n${recent.map((d) => `• ${d.verdict} ${d.call.tool} (${d.rule_id}) ${d.decision_id}`).join("\n")}` : "",
-          ].join("\n"),
-        );
-      },
-      verify: async () => {
-        const v = await auditChain.verify();
-        return v.valid ? `✅ Audit chain intact — ${v.rows} rows` : `🚨 Audit chain BROKEN at row #${v.broken_at}`;
-      },
-      replay: async (id) => {
-        const { decision, original, reconstructed } = await replayDecision(id);
-        const changed = decision.verdict !== original.verdict ? "⚠️ verdict CHANGED" : "same verdict";
-        return maskDeep(`Replay of ${id} against policy ${decision.policy_version}${reconstructed ? " (rebuilt from audit log)" : ""}\nThen: ${fmtDecision(original)}\nNow:  ${fmtDecision(decision)}\n${changed}`);
-      },
-      trace: async (q) => {
-        const hits = forensics(await auditChain.list(), q, 10);
-        if (!hits.length) return `No untrusted content matching "${q}".`;
-        return maskDeep(
-          hits
-            .map((h) => `📄 ${h.source.label ?? h.source.tool ?? "untrusted"} (run ${h.source.run_id})\n${h.decisions.map((d) => `  • ${d.verdict} ${d.tool} → ${d.outcome ?? "pending"} (${d.decision_id})`).join("\n") || "  (no actions after it)"}`)
-            .join("\n"),
-        );
-      },
-      overrideGrant: async (profile, tool, minutes, by) => {
+    statusExtra: async () => {
+      const m = metricsFor(decisionsFromAudit(await auditChain.list()));
+      return [
+        `Policy: ${getPolicy().policy_version}   Mode: ${config.strict ? "production" : "demo"}   Guard: ${providers.guard.constructor.name}`,
+        `Decisions: ${m.decisions} (${Object.entries(m.by_verdict).map(([k, n]) => `${k} ${n}`).join(", ") || "none"})   p50/p95: ${m.latency_ms.p50 ?? "-"}/${m.latency_ms.p95 ?? "-"} ms`,
+        `Overrides active: ${activeOverrides().length}`,
+      ];
+    },
+    trace: async (q) => {
+      const hits = forensics(await auditChain.list(), q, 10);
+      if (!hits.length) return `No untrusted content matching "${q}".`;
+      return maskDeep(
+        hits
+          .map((h) => `📄 ${h.source.label ?? h.source.tool ?? "untrusted"} (run ${h.source.run_id})\n${h.decisions.map((d) => `  • ${d.verdict} ${d.tool} → ${d.outcome ?? "pending"} (${d.decision_id})`).join("\n") || "  (no actions after it)"}`)
+          .join("\n"),
+      );
+    },
+    overrides: !config.telegramOverride ? undefined : {
+      grant: async (profile, tool, minutes, by) => {
         if (minutes <= 0 || minutes > MAX_OVERRIDE_MINUTES) throw new Error(`minutes must be between 1 and ${MAX_OVERRIDE_MINUTES}`);
         const o = addOverride({ profile, tool, expires_at: Date.now() + minutes * 60_000, granted_by: by });
         await bus.publishSafe({ type: "policy.override", run_id: "system", action: "granted", profile, tool, expires_at: new Date(o.expires_at).toISOString(), by });
         return `✅ ${profile} may use ${tool} for ${minutes} min (until ${new Date(o.expires_at).toISOString()}). Provenance, egress and approval rules still apply.`;
       },
-      overrideList: () => {
+      list: () => {
         const list = activeOverrides();
         return list.length ? list.map((o) => `• ${o.profile} → ${o.tool} until ${new Date(o.expires_at).toISOString()} (by ${o.granted_by})`).join("\n") : "No active overrides.";
       },
-      overrideClear: async (by) => {
+      clear: async (by) => {
         const n = clearOverrides();
         await bus.publishSafe({ type: "policy.override", run_id: "system", action: "cleared", by });
         return `Cleared ${n} override(s).`;

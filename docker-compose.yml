@@ -1,41 +1,58 @@
-# Self-hosted Sentinel (deployment "Model B"): gateway + dashboard + Postgres audit log.
+# Self-hosted Sentinel ("Model B"): Postgres-backed audit chain, gateway API, dashboard.
 #
-#   cp docker.env.example .env   # fill in API_TOKEN etc.
+#   export API_TOKEN=admin:$(openssl rand -hex 24) AGENT_API_KEYS=my-agent:$(openssl rand -hex 24)
 #   docker compose up -d --build
-#   dashboard: http://localhost:8080   gateway API: http://localhost:4000
+#
+# Dashboard http://localhost:8080 (sign in with the part of API_TOKEN after "admin:"), API http://localhost:4000.
+# Strict mode (no shield-off, reset or tamper demo; Groq required): SENTINEL_MODE=production.
 services:
   db:
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     environment:
       POSTGRES_USER: sentinel
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sentinel}
       POSTGRES_DB: sentinel
-    volumes: [pgdata:/var/lib/postgresql/data]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U sentinel"]
-      interval: 5s
-      retries: 10
+      interval: 2s
+      timeout: 3s
+      retries: 20
     restart: unless-stopped
 
   backend:
     build: ./backend
-    env_file: .env
-    environment:
-      DATABASE_URL: postgres://sentinel:${POSTGRES_PASSWORD:-sentinel}@db:5432/sentinel
-      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:8080}
-    ports: ["4000:4000"]
     depends_on:
-      db: { condition: service_healthy }
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://sentinel:${POSTGRES_PASSWORD:-sentinel}@db:5432/sentinel
+      API_TOKEN: ${API_TOKEN:?set API_TOKEN, e.g. API_TOKEN=admin:$(openssl rand -hex 24)}
+      AGENT_API_KEYS: ${AGENT_API_KEYS:-}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:8080}
+      SENTINEL_MODE: ${SENTINEL_MODE:-demo}
+      ENABLE_TAMPER_DEMO: ${ENABLE_TAMPER_DEMO:-false}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_ALLOWED_CHAT_ID: ${TELEGRAM_ALLOWED_CHAT_ID:-}
+      TELEGRAM_ALLOWED_USER_IDS: ${TELEGRAM_ALLOWED_USER_IDS:-}
+    ports:
+      - "4000:4000"
     restart: unless-stopped
 
   frontend:
     build:
-      context: .
-      dockerfile: frontend/Dockerfile
+      context: ./frontend
       args:
         VITE_API_URL: ${PUBLIC_API_URL:-http://localhost:4000}
-    ports: ["8080:80"]
-    depends_on: [backend]
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
     restart: unless-stopped
 
 volumes:

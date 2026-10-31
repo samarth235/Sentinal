@@ -13,6 +13,7 @@ export type {
   Trust,
   Verdict,
 } from "../../../backend/src/types.ts";
+import type { Decision } from "../../../backend/src/types.ts";
 
 export interface ScenarioInfo {
   id: string;
@@ -30,11 +31,17 @@ export interface UiConfig {
   telegram_mode?: "polling" | "webhook" | null;
   telegram_error?: string | null;
   auth_required: boolean;
-  demo_features?: boolean;
+  mode: "demo" | "production";
   live_mode?: boolean;
   real_browse?: boolean;
   policy_version?: string;
   version?: string;
+}
+
+export interface ReplayResult {
+  decision: Decision & { reconstructed?: boolean };
+  policyHash: string | null;
+  originalPolicyHash: string | null;
 }
 
 export interface ForensicsHit {

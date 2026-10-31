@@ -83,11 +83,12 @@ describe("policy engine rules", () => {
     expect(d.rule_id).toBe("R5");
   });
 
-  it("R5: sensitive data to a trusted domain is not an egress violation", () => {
+  it("R5: sensitive data to a trusted domain needs approval rather than a block", () => {
     const ledger = ledgerWith("email ABCPE1234F to priya@company.test");
     const d = evaluate(call("send_email", { to: "priya@company.test", subject: "s", body: "ABCPE1234F" }), ledger, policy, benign);
     expect(d.verdict).toBe("REQUIRE_APPROVAL");
-    expect(d.rule_id).toBe("R8");
+    expect(d.rule_id).toBe("R5");
+    expect(d.reasons[0].code).toBe("SENSITIVE_DATA_EGRESS");
   });
 
   it("R6: tainted session + guard injection escalates to approval", () => {

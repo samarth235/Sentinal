@@ -27,12 +27,11 @@ node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"
 2. Create a group for approvers (or use a private chat with the bot) and add the bot.
 3. Send any message in that chat, then open `https://api.telegram.org/bot<TOKEN>/getUpdates` in a browser and read
    `chat.id` (`TELEGRAM_ALLOWED_CHAT_ID`, negative for groups) and each person's `from.id` (`TELEGRAM_ALLOWED_USER_IDS`, comma-separated).
-4. `/override` only works when `TELEGRAM_ALLOWED_USER_IDS` is set.
 
 ## 3. Groq guard
 
 Create an API key at console.groq.com (`GROQ_API_KEY`) and pick a current fast instruction model from its model list (`GROQ_MODEL`).
-Without Groq, set `ALLOW_HEURISTIC_GUARD=true` to accept the regex fallback (production refuses to start otherwise).
+Without Groq the backend falls back to a regex guard in demo mode. `SENTINEL_MODE=production` refuses to start without Groq.
 
 ## 4. Backend — Railway
 
@@ -51,8 +50,8 @@ Without Groq, set `ALLOW_HEURISTIC_GUARD=true` to accept the regex fallback (pro
    TELEGRAM_ALLOWED_CHAT_ID=<chat id>
    TELEGRAM_ALLOWED_USER_IDS=<your ids>
    FRONTEND_ORIGIN=https://<filled in after step 5>
-   # Hackathon/demo deployment only (scenarios, shield OFF, tamper button):
-   ENABLE_DEMO_FEATURES=true
+   # Hackathon/demo deployment (shield OFF compare + tamper button). Default SENTINEL_MODE is demo.
+   SENTINEL_MODE=demo
    ENABLE_TAMPER_DEMO=true
    # Optional: live mode with Claude, and real web pages in live mode
    ANTHROPIC_API_KEY=<key>
@@ -62,8 +61,8 @@ Without Groq, set `ALLOW_HEURISTIC_GUARD=true` to accept the regex fallback (pro
 4. **Settings → Networking → Generate Domain**. Open `https://<domain>/api/ready` — expect `{"ok":true,...}`.
    If the deploy fails, the logs start with `[sentinel] refusing to start: ...` and say exactly which variable is wrong.
 
-> The tamper demo edits audit rows on purpose. Turn `ENABLE_TAMPER_DEMO` off after the event, and for a real deployment
-> also set `ENABLE_DEMO_FEATURES=false` and run `backend/sql/002_least_privilege.sql` (append-only DB role).
+> The tamper demo edits audit rows on purpose. For a real deployment after the event: `SENTINEL_MODE=production`,
+> remove `ENABLE_TAMPER_DEMO`, and run `backend/sql/002_least_privilege.sql` (append-only DB role).
 
 ## 5. Dashboard — Vercel
 
@@ -98,9 +97,10 @@ Long polling is fine with one backend instance (the default `numReplicas: 1`). T
 ## Self-hosting instead (Docker)
 
 ```bash
-cp docker.env.example .env      # fill in the secrets
+export API_TOKEN=admin:$(openssl rand -hex 24) AGENT_API_KEYS=my-agent:$(openssl rand -hex 24)
 docker compose up -d --build     # dashboard :8080, API :4000, Postgres in a volume
 ```
+Pass `SENTINEL_MODE`, `GROQ_*`, `TELEGRAM_*` or `ANTHROPIC_API_KEY` through the environment as needed.
 
 ## Operating notes
 

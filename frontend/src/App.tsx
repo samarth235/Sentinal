@@ -123,6 +123,11 @@ export default function App() {
     return run_id;
   };
 
+  // Production mode: the server rejects shield-off runs, so keep the toggle on.
+  useEffect(() => {
+    if (config?.mode === "production") setShield(true);
+  }, [config?.mode]);
+
   const onRun = async () => {
     setBusy(true);
     try {

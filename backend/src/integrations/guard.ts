@@ -1,3 +1,4 @@
+import { config } from "../config.js";
 import type { GuardSignal, ToolCall } from "../types.js";
 
 export interface GuardProvider {
@@ -20,7 +21,8 @@ export class HeuristicGuard implements GuardProvider {
   }
 }
 
-export const GUARD_TIMEOUT_MS = 3000;
+// Outer hard stop. Slightly above GUARD_TIMEOUT_MS so a provider's own timeout (e.g. GroqGuard) reports first.
+export const GUARD_TIMEOUT_MS = config.guardTimeoutMs + 250;
 
 export function unavailableSignal(provider: string): GuardSignal {
   return { available: false, label: "unknown", score: 0, provider };
