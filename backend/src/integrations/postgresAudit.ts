@@ -81,6 +81,11 @@ export class PostgresChainStore implements ChainStore {
     await this.pool.query("UPDATE audit_log SET payload = $1 WHERE seq = $2", [JSON.stringify(flipVerdict(target.payload)), target.seq]);
     return target.seq;
   }
+
+  async setPayload(seq: number, payload: unknown): Promise<void> {
+    await this.init();
+    await this.pool.query("UPDATE audit_log SET payload = $1 WHERE seq = $2", [JSON.stringify(payload), seq]);
+  }
 }
 
 export function createPostgresAudit(databaseUrl: string): HashChainAuditSink {

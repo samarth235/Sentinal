@@ -1,5 +1,7 @@
-import { ArrowLeftRight, Check, ChevronDown, Moon, Play, RotateCcw, ShieldCheck, Sun } from "lucide-react";
-import { Select, Switch, ToggleGroup } from "radix-ui";
+import { ArrowLeftRight, Check, ChevronDown, KeyRound, Moon, Play, RotateCcw, ShieldCheck, Sun } from "lucide-react";
+import { useState } from "react";
+import { Popover, Select, Switch, ToggleGroup } from "radix-ui";
+import { getToken, setToken } from "../lib/api";
 import type { ScenarioInfo, UiConfig } from "../lib/types";
 
 interface Props {
@@ -64,6 +66,51 @@ function ScenarioSelect({ scenarios, value, onChange }: { scenarios: ScenarioInf
   );
 }
 
+/** Operator token for backends started with API_TOKEN; stored in this browser only. */
+function TokenButton() {
+  const [value, setValue] = useState(getToken);
+  const [saved, setSaved] = useState(Boolean(getToken()));
+  return (
+    <Popover.Root>
+      <Popover.Trigger asChild>
+        <button className={`btn btn-sm ${saved ? "btn-ghost" : "btn-outline text-warn"}`} aria-label="API token">
+          <KeyRound size={14} /> {saved ? "Token set" : "Set token"}
+        </button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content align="end" sideOffset={6} className="z-50 w-72 rounded-md border border-line bg-surface p-3 text-fg shadow-lg">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              setToken(value.trim());
+              setSaved(Boolean(value.trim()));
+            }}
+          >
+            <label className="text-xs font-medium text-fg-muted" htmlFor="api-token">
+              This backend requires an API token to run, approve or reset.
+            </label>
+            <input
+              id="api-token"
+              type="password"
+              autoComplete="off"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              className="mt-2 h-8 w-full rounded-md border border-line bg-canvas px-2 font-mono text-xs outline-none focus:border-line-strong"
+            />
+            <div className="mt-2 flex justify-end gap-2">
+              <Popover.Close asChild>
+                <button type="submit" className="btn btn-sm btn-primary">
+                  Save
+                </button>
+              </Popover.Close>
+            </div>
+          </form>
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
+  );
+}
+
 export function ControlBar(p: Props) {
   const current = p.scenarios.find((s) => s.id === p.scenarioId);
   return (
@@ -82,6 +129,7 @@ export function ControlBar(p: Props) {
               <Meta label="Approvals" value={p.config.telegram ? "Telegram, dashboard" : "Dashboard"} />
             </>
           )}
+          {p.config?.auth_required && <TokenButton />}
           <span className="inline-flex items-center gap-1.5 text-fg-muted">
             <span className={`h-2 w-2 rounded-full ${p.connected ? "bg-allow-solid" : "bg-deny-solid"}`} />
             {p.connected ? "Connected" : "Offline"}

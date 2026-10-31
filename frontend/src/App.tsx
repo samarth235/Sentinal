@@ -77,6 +77,12 @@ export default function App() {
   const runId = selectedRun && store.runs[selectedRun] ? selectedRun : store.runOrder.at(-1);
   const run = runId ? store.runs[runId] : undefined;
 
+  // Keep the scenario picker (and its prompt line) in step with the run on screen.
+  const shownScenario = run?.scenario_id;
+  useEffect(() => {
+    if (shownScenario && !busy) setScenarioId(shownScenario);
+  }, [shownScenario, runId]);
+
   // Default selection: the newest decision with evidence (the "here is the sentence" moment), else the newest.
   const effectiveDecisionId = useMemo(() => {
     if (selectedDecision && run?.decisions[selectedDecision]) return selectedDecision;
@@ -133,7 +139,8 @@ export default function App() {
     }
   };
 
-  const recentRuns = [...store.runOrder].reverse().slice(0, 8);
+  // Runs whose run.started fell out of the server's 500-event snapshot are fragments; skip them.
+  const recentRuns = [...store.runOrder].reverse().filter((id) => store.runs[id]?.scenario_id).slice(0, 8);
 
   return (
     <div className="flex min-h-full flex-col">

@@ -92,6 +92,7 @@ describe("hash-chained audit", () => {
       },
       list: async () => [],
       tamper: async () => null,
+      setPayload: async () => undefined,
     });
     await expect(chain.append({ type: "agent.message", run_id: "r", text: "x" })).rejects.toThrow("db down");
     // queue still works after a failure

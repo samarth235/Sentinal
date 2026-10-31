@@ -22,6 +22,10 @@ export const config = {
   guardTimeoutMs: Number(process.env.GUARD_TIMEOUT_MS ?? 3000),
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN ?? "",
   telegramAllowedChatId: process.env.TELEGRAM_ALLOWED_CHAT_ID ?? "",
+  telegramAllowedUserIds: list(process.env.TELEGRAM_ALLOWED_USER_IDS, ""),
   frontendOrigins: list(process.env.FRONTEND_ORIGIN, "http://localhost:5173"),
   enableTamperDemo: process.env.ENABLE_TAMPER_DEMO === "true",
+  // Shared secret for every state-changing route. Required when NODE_ENV=production.
+  apiToken: process.env.API_TOKEN ?? "",
+  production: process.env.NODE_ENV === "production",
 };

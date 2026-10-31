@@ -34,6 +34,8 @@ export interface ChainStore {
   list(runId?: string): Promise<AuditRow[]>;
   /** Demo only: rewrite one decision row's payload without fixing hashes. */
   tamper(): Promise<number | null>;
+  /** Demo only: overwrite one row's payload in place (used by tamper and its undo). */
+  setPayload(seq: number, payload: unknown): Promise<void>;
 }
 
 /**
@@ -43,6 +45,8 @@ export interface ChainStore {
  */
 export class HashChainAuditSink implements AuditSink {
   private queue: Promise<unknown> = Promise.resolve();
+  /** seq -> payload before the tamper demo edited it, so a rehearsal can be undone. */
+  private readonly originals = new Map<number, unknown>();
 
   constructor(readonly store: ChainStore) {}
 
@@ -70,8 +74,26 @@ export class HashChainAuditSink implements AuditSink {
     return verifyChain(await this.store.list());
   }
 
-  tamper(): Promise<number | null> {
-    return this.store.tamper();
+  async tamper(): Promise<number | null> {
+    const target = pickTamperTarget(await this.store.list());
+    if (!target) return null;
+    if (!this.originals.has(target.seq)) this.originals.set(target.seq, target.payload);
+    await this.store.setPayload(target.seq, flipVerdict(target.payload));
+    return target.seq;
+  }
+
+  /** Undo every tamper made by this process. Returns the restored seqs. */
+  async restore(): Promise<number[]> {
+    const seqs = [...this.originals.keys()].sort((a, b) => a - b);
+    for (const seq of seqs) {
+      await this.store.setPayload(seq, this.originals.get(seq));
+      this.originals.delete(seq);
+    }
+    return seqs;
+  }
+
+  get tamperedSeqs(): number[] {
+    return [...this.originals.keys()];
   }
 }
 
@@ -87,14 +109,48 @@ export function verifyChain(rows: AuditRow[]): VerifyResult {
   return { valid: true, rows: rows.length };
 }
 
-/** Local fallback (no DATABASE_URL): chain kept in memory, mirrored to a JSONL file when a path is given. */
+/**
+ * Local fallback (no DATABASE_URL): chain kept in memory, mirrored to a JSONL file when a path is given.
+ * On first use the file is read back so the chain survives restarts. A file that does not verify is
+ * moved aside (never silently extended) and a fresh chain starts.
+ */
 export class MemoryChainStore implements ChainStore {
   readonly kind = "memory" as const;
   readonly rows: AuditRow[] = [];
+  private loaded: Promise<void> | null = null;
 
   constructor(private readonly filePath: string | null = null) {}
 
+  private load(): Promise<void> {
+    this.loaded ??= (async () => {
+      if (!this.filePath) return;
+      let text: string;
+      try {
+        text = await fs.readFile(this.filePath, "utf8");
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+        throw err;
+      }
+      let rows: AuditRow[] = [];
+      let parsed = true;
+      try {
+        rows = text.split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l) as AuditRow);
+      } catch {
+        parsed = false;
+      }
+      if (parsed && verifyChain(rows).valid) {
+        this.rows.push(...rows);
+        return;
+      }
+      const aside = `${this.filePath}.invalid-${Date.now()}`;
+      await fs.rename(this.filePath, aside);
+      console.warn(`[sentinel] ${this.filePath} did not verify; moved to ${aside} and started a new chain`);
+    })();
+    return this.loaded;
+  }
+
   async append(build: (tail: { seq: number; hash: string } | null) => AuditRow): Promise<AuditRow> {
+    await this.load();
     const last = this.rows.at(-1);
     const row = build(last ? { seq: last.seq, hash: last.hash } : null);
     if (this.filePath) await fs.appendFile(this.filePath, JSON.stringify(row) + "\n", "utf8");
@@ -103,15 +159,24 @@ export class MemoryChainStore implements ChainStore {
   }
 
   async list(runId?: string): Promise<AuditRow[]> {
+    await this.load();
     const rows = runId ? this.rows.filter((r) => r.run_id === runId) : this.rows;
     return rows.map((r) => ({ ...r }));
   }
 
   async tamper(): Promise<number | null> {
+    await this.load();
     const row = pickTamperTarget(this.rows);
     if (!row) return null;
     row.payload = flipVerdict(row.payload);
     return row.seq;
+  }
+
+  /** Only the in-memory copy changes; the JSONL mirror keeps the original row. */
+  async setPayload(seq: number, payload: unknown): Promise<void> {
+    await this.load();
+    const row = this.rows.find((r) => r.seq === seq);
+    if (row) row.payload = payload;
   }
 }
 

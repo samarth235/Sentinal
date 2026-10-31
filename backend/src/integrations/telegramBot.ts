@@ -6,6 +6,8 @@ import { maskDeep } from "./masking.js";
 export interface TelegramOptions {
   token: string;
   allowedChatId: string;
+  /** Optional: when non-empty, only these Telegram user ids may approve (matters if the chat is a group). */
+  allowedUserIds?: string[];
   timeoutSeconds: number;
   bus: SentinelBus;
   /** Person A's resolver; first answer wins, later answers return false. */
@@ -32,6 +34,7 @@ export function startTelegramBot(opts: TelegramOptions) {
   const messages = new Map<string, { id: number; text: string }>(); // decision_id -> sent message
   const browsed = new Map<string, string[]>(); // run_id -> URLs read (for the "tainted" line)
   const allowed = String(opts.allowedChatId);
+  const users = new Set((opts.allowedUserIds ?? []).map(String));
 
   opts.bus.on("tool.requested", (e) => {
     if (e.call.tool === "browse_url" && typeof e.call.args.url === "string") {
@@ -40,6 +43,8 @@ export function startTelegramBot(opts: TelegramOptions) {
       browsed.set(e.run_id, list);
     }
   });
+
+  opts.bus.on("run.finished", (e) => browsed.delete(e.run_id));
 
   opts.bus.on("approval.requested", async (e) => {
     const d = e.decision;
@@ -81,6 +86,10 @@ export function startTelegramBot(opts: TelegramOptions) {
       console.warn(`[sentinel] telegram: rejected approval attempt from chat ${chatId}`);
       return void (await ctx.answerCallbackQuery({ text: "Not authorised to approve.", show_alert: true }));
     }
+    if (users.size && !users.has(String(ctx.from.id))) {
+      console.warn(`[sentinel] telegram: rejected approval attempt from user ${ctx.from.id}`);
+      return void (await ctx.answerCallbackQuery({ text: "Not authorised to approve.", show_alert: true }));
+    }
     const m = /^([ar]):(.+)$/.exec(ctx.callbackQuery.data);
     if (!m) return void (await ctx.answerCallbackQuery());
     const approver = `telegram:${ctx.from.username ?? ctx.from.id}`;
@@ -89,7 +98,7 @@ export function startTelegramBot(opts: TelegramOptions) {
   });
 
   bot.command("pending", async (ctx) => {
-    if (String(ctx.chat.id) !== allowed) return;
+    if (String(ctx.chat.id) !== allowed || (users.size && !users.has(String(ctx.from?.id)))) return;
     const list = opts.pending();
     await ctx.reply(list.length ? list.map((d) => `• ${d.call.tool} (${d.decision_id})`).join("\n") : "No pending approvals.");
   });

@@ -1,4 +1,4 @@
-import { Braces, Check, Clock, History, ListChecks } from "lucide-react";
+import { Bot, Braces, Check, CircleAlert, Clock, History, ListChecks } from "lucide-react";
 import { useEffect, useState } from "react";
 import { EmptyState } from "./ui";
 import { api } from "../lib/api";
@@ -149,6 +149,17 @@ function Card({
   );
 }
 
+/** Assistant text from live mode, and run failures (e.g. missing API key), which otherwise leave an empty feed. */
+function AgentNote({ text }: { text: string }) {
+  const failed = text.startsWith("Run failed:");
+  return (
+    <div className={`flex gap-2 rounded-md border px-3 py-2 text-[13px] leading-snug ${failed ? "border-deny-line bg-deny-bg text-deny" : "border-line bg-surface text-fg-muted"}`}>
+      {failed ? <CircleAlert size={14} className="mt-0.5 shrink-0" /> : <Bot size={14} className="mt-0.5 shrink-0 text-fg-subtle" />}
+      <p className="min-w-0 whitespace-pre-wrap break-words">{text}</p>
+    </div>
+  );
+}
+
 export function DecisionFeed({
   run,
   selectedId,
@@ -170,7 +181,8 @@ export function DecisionFeed({
         {run && <span className="text-xs text-fg-subtle tabular-nums">{decisions.length} call{decisions.length === 1 ? "" : "s"}</span>}
       </div>
       <div className="flex-1 space-y-2 overflow-y-auto bg-canvas p-3">
-        {decisions.length === 0 && <EmptyState Icon={ListChecks} title="No tool calls yet" hint="Each call the agent makes is judged here." />}
+        {run?.messages.map((m, i) => <AgentNote key={i} text={m} />)}
+        {decisions.length === 0 && !run?.messages.length && <EmptyState Icon={ListChecks} title="No tool calls yet" hint="Each call the agent makes is judged here." />}
         {run &&
           decisions.map((d) => (
             <Card

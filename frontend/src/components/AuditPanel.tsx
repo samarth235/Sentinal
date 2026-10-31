@@ -1,4 +1,4 @@
-import { Link2, PencilLine, ShieldAlert, ShieldCheck } from "lucide-react";
+import { Link2, PencilLine, RotateCcw, ShieldAlert, ShieldCheck } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { EmptyState } from "./ui";
@@ -36,6 +36,21 @@ export function AuditPanel({ rows, config, onChanged, notify }: { rows: AuditRow
     }
   };
 
+  const doRestore = async () => {
+    setBusy(true);
+    try {
+      const { restored } = await api.restoreTamper();
+      setTampered(null);
+      setVerify(await api.verify());
+      onChanged();
+      notify(restored.length ? `Restored row${restored.length > 1 ? "s" : ""} #${restored.join(", #")}.` : "Nothing to restore.");
+    } catch (e) {
+      notify(`Restore failed: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const broken = verify && !verify.valid ? verify.broken_at : null;
   const listRef = useRef<HTMLDivElement | null>(null);
   // Show the broken row even when it is older than the visible window.
@@ -67,6 +82,11 @@ export function AuditPanel({ rows, config, onChanged, notify }: { rows: AuditRow
                 <ShieldAlert size={13} /> Broken at row #{verify.broken_at}
               </span>
             ))}
+          {config?.tamper_demo && (tampered !== null || broken !== null) && (
+            <button className="btn btn-sm btn-ghost" disabled={busy} onClick={doRestore}>
+              <RotateCcw size={13} /> Undo tamper
+            </button>
+          )}
           {config?.tamper_demo && (
             <button className="btn btn-sm btn-ghost text-deny hover:text-deny" disabled={busy || rows.length === 0} onClick={doTamper}>
               <PencilLine size={13} /> Tamper

@@ -15,6 +15,7 @@ coverage/
 # Logs and runtime data (audit log is generated per run)
 *.log
 *.jsonl
+*.jsonl.invalid-*
 npm-debug.log*
 
 # Local editor / OS / tool settings

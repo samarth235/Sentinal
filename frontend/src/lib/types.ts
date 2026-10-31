@@ -27,6 +27,7 @@ export interface UiConfig {
   approval_timeout_seconds: number;
   guard_provider: string;
   telegram: boolean;
+  auth_required: boolean;
 }
 
 export interface OutboxEmail {

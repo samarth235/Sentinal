@@ -72,7 +72,8 @@ export function reduce(s: State, e: BusEvent): State {
       if (!run.decisionOrder.includes(e.decision.decision_id)) run.decisionOrder = [...run.decisionOrder, e.decision.decision_id];
       break;
     case "approval.requested":
-      run.pending = { ...run.pending, [e.decision.decision_id]: Date.now() };
+      // Server time of the decision, so the countdown survives a page refresh (snapshot replay).
+      run.pending = { ...run.pending, [e.decision.decision_id]: Date.parse(e.decision.decided_at) || Date.now() };
       break;
     case "approval.resolved": {
       const { [e.decision_id]: _done, ...rest } = run.pending;
