@@ -1,0 +1,34 @@
+# Render Blueprint for the Sentinel gateway API (New > Blueprint > this repo).
+# The dashboard is deployed separately on Vercel; set FRONTEND_ORIGIN to its URL.
+services:
+  - type: web
+    name: sentinel-gateway
+    runtime: docker
+    plan: free
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SENTINEL_MODE
+        value: demo
+      - key: API_TOKEN
+        generateValue: true
+      - key: ENABLE_TAMPER_DEMO
+        value: "true"
+      - key: FRONTEND_ORIGIN
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_ALLOWED_CHAT_ID
+        sync: false

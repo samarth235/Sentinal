@@ -9,8 +9,12 @@ COPY tsconfig.json ./
 COPY src ./src
 COPY sql ./sql
 
+# The JSONL audit mirror (used when DATABASE_URL is unset) needs a directory the node user can write.
+RUN mkdir -p /app/data && chown node:node /app/data
+
 ENV NODE_ENV=production \
-    PORT=4000
+    PORT=4000 \
+    AUDIT_PATH=/app/data/audit.jsonl
 EXPOSE 4000
 USER node
 
