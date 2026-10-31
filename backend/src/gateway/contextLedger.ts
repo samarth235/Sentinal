@@ -24,7 +24,7 @@ export class ContextLedger {
   ) {}
 
   private add(seg: Omit<ContextSegment, "segment_id" | "added_at">, label?: string): ContextSegment {
-    const segment: ContextSegment = { segment_id: `seg_${nanoid(8)}`, added_at: new Date().toISOString(), ...seg };
+    const segment: ContextSegment = { segment_id: `seg_${nanoid(8)}`, added_at: new Date().toISOString(), ...seg, ...(label ? { label } : {}) };
     this.segments.push(segment);
     if (label) this.labels.set(segment.segment_id, label);
     this.emit({ type: "context.added", run_id: this.runId, segment });

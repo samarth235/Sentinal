@@ -12,8 +12,8 @@
      unknown and still needs human approval (R9). Safe either way, but do not call it "causal derivation".
 
 4. **Architecture.** Agent → Sentinel gateway (policy engine) → tools. On the side: guard classifier (Groq, can only escalate), hash-chained audit log (Postgres), approvals (Telegram + dashboard), live dashboard (Socket.io).
-   Telegram is read-only plus approve/reject: `/status`, `/pending`, `/replay <id>`, and an alert on every block.
-   There is deliberately **no `/override`**: a chat command that loosens policy would make the approval channel the
+   Telegram is read-only plus approve/reject: `/status`, `/pending`, `/verify`, `/replay <id>`, `/trace <source>`, and an alert on every block.
+   `/override` is **off by default** (opt-in, time-boxed, audited): a chat command that loosens policy would make the approval channel the
    easiest way to hijack the agent. Policy changes go through the policy file (its hash is recorded per run).
 
 5. **The 11 rules on one slide.** R0–R10, with the fail-closed ones highlighted: R0 engine error → DENY, R7 guard unavailable → approval, approval timeout → blocked, audit failure → DENY, invalid policy → server refuses to start.

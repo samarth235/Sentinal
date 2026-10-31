@@ -1,22 +1,24 @@
-# Sentinel gateway API. Runs the TypeScript sources with tsx (no separate compile step yet).
-FROM node:22-alpine
+# Sentinel gateway — production image (also used by Railway when it detects the Dockerfile).
+FROM node:22-alpine AS build
 WORKDIR /app
-
 COPY package.json package-lock.json ./
-RUN npm ci --no-audit --no-fund
-
-COPY tsconfig.json ./
+RUN npm ci
+COPY tsconfig.json tsconfig.build.json ./
+COPY scripts ./scripts
 COPY src ./src
+RUN npm run build && npm prune --omit=dev
+
+FROM node:22-alpine
+ENV NODE_ENV=production
+WORKDIR /app
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+COPY package.json ./
 COPY sql ./sql
-
-# The JSONL audit mirror (used when DATABASE_URL is unset) needs a directory the node user can write.
-RUN mkdir -p /app/data && chown node:node /app/data
-
-ENV NODE_ENV=production \
-    PORT=4000 \
-    AUDIT_PATH=/app/data/audit.jsonl
-EXPOSE 4000
+# The JSONL audit fallback writes here when no DATABASE_URL is set (mount a volume to keep it).
+RUN mkdir -p /data && chown node:node /data
+ENV AUDIT_PATH=/data/audit.jsonl PORT=4000
 USER node
-
-# tsx forwards SIGTERM, so the server's graceful shutdown runs on `docker stop`.
-CMD ["node_modules/.bin/tsx", "src/index.ts"]
+EXPOSE 4000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s CMD wget -qO- http://127.0.0.1:${PORT}/api/health || exit 1
+CMD ["node", "dist/index.js"]

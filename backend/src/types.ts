@@ -28,6 +28,7 @@ export interface ContextSegment {
   trust: Trust;
   text: string;
   added_at: string;
+  label?: string;             // where it came from, e.g. a URL or "inbox"
 }
 
 export interface Evidence {
@@ -88,10 +89,11 @@ export interface Decision {
   latency_ms: number;         // measured gateway time, excluding human approval wait
   decided_at: string;
   outcome?: Outcome;          // filled in after execution/approval
+  policy_version?: string;    // hash of the policy (plus active overrides) that made this decision
 }
 
 export type BusEvent =
-  | { type: "run.started"; run_id: string; scenario_id: string; shield: boolean; mode: "live" | "scripted" }
+  | { type: "run.started"; run_id: string; scenario_id: string; shield: boolean; mode: RunMode; title?: string; profile?: string }
   | { type: "context.added"; run_id: string; segment: ContextSegment }
   | { type: "tool.requested"; run_id: string; call: ToolCall }
   | { type: "decision.made"; run_id: string; decision: Decision }
@@ -99,7 +101,12 @@ export type BusEvent =
   | { type: "approval.resolved"; run_id: string; decision_id: string; result: "approved" | "rejected" | "timeout"; approver?: string }
   | { type: "tool.executed"; run_id: string; decision_id: string; result_preview: string }
   | { type: "agent.message"; run_id: string; text: string }
-  | { type: "run.finished"; run_id: string; summary: RunSummary };
+  | { type: "run.finished"; run_id: string; summary: RunSummary }
+  | { type: "policy.override"; run_id: "system"; action: "granted" | "cleared" | "expired"; profile?: string; tool?: string; expires_at?: string; by: string }
+  | { type: "system.notice"; run_id: "system"; level: "info" | "warn" | "error"; text: string };
+
+/** live = Claude in this server, scripted = deterministic demo, sdk = an external agent using the gateway API. */
+export type RunMode = "live" | "scripted" | "sdk";
 
 export interface RunSummary {
   run_id: string;

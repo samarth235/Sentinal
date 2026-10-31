@@ -98,7 +98,7 @@ function build(run: RunState | undefined, selectedId?: string): { nodes: Node[];
   nodes.push({
     id: "agent",
     position: { x: COL.agent, y: midY },
-    data: { label: <Label title="Agent" sub={run.mode === "live" ? "Claude (live)" : "scripted replay"} /> },
+    data: { label: <Label title="Agent" sub={run.mode === "live" ? "Claude (live)" : run.mode === "sdk" ? "external agent (SDK)" : "scripted replay"} /> },
     style: box(LINE, undefined, { width: 120 }),
     ...side,
   });

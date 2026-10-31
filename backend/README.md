@@ -12,7 +12,7 @@ All data is synthetic. No real emails or payments are ever sent; all domains use
 ```bash
 cp .env.example .env      # add ANTHROPIC_API_KEY for live mode
 npm install
-npm test                  # provenance, every policy rule, 4 scenarios x shield ON/OFF, fail-closed
+npm test                  # provenance, every policy rule, 5 scenarios x shield ON/OFF, agent API, fail-closed
 npm run dev               # API on http://localhost:4000
 ```
 
@@ -65,9 +65,11 @@ required; approval timeout => `TIMED_OUT` (blocked); engine exception or audit f
 import { createSentinel } from "./src/sdk.js";
 
 const sentinel = createSentinel({ policyPath, providers });
-const guardedTools = sentinel.wrap(myTools, { profile: "research_assistant", shield: true });
-// each guardedTools[name](args) now routes through handleToolCall
+const guardedTools = sentinel.wrap({ send_email: realSendEmail, browse_url: realFetch }, { profile: "research_assistant" });
+// each guardedTools[name](args) is decided by Sentinel, then runs YOUR function (null = built-in mock tool)
 ```
+
+Agents in another process or language use the HTTP gateway (`/api/v1`) and the `sdk/` package instead.
 
 Call `guardedTools.recordUser(prompt)` with the user's request so provenance knows what the
 user actually asked for.

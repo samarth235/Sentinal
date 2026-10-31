@@ -87,6 +87,8 @@ describe("hash-chained audit", () => {
   it("append failure propagates (gateway then denies)", async () => {
     const chain = new HashChainAuditSink({
       kind: "memory",
+      ping: async () => undefined,
+      head: async () => null,
       append: async () => {
         throw new Error("db down");
       },

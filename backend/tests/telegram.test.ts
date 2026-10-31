@@ -27,6 +27,7 @@ function decision(over: Partial<Decision> = {}): Decision {
 
 /** A grammY bot whose API calls are captured instead of sent. */
 function harness(opts: { allowedUserIds?: string[] } = {}) {
+  const granted: string[] = [];
   const calls: { method: string; payload: Record<string, unknown> }[] = [];
   const bot = new Bot("1:test", { botInfo: { id: 1, is_bot: true, first_name: "Sentinel", username: "sentinel_test_bot", can_join_groups: true, can_read_all_group_messages: false, supports_inline_queries: false, can_connect_to_business: false, has_main_web_app: false } as never });
   bot.api.config.use(async (_prev, method, payload) => {
@@ -46,7 +47,14 @@ function harness(opts: { allowedUserIds?: string[] } = {}) {
     pending: () => [decision({ verdict: "REQUIRE_APPROVAL", outcome: undefined })],
     recent: () => [decision()],
     verify: async () => ({ valid: true, rows: 7 }),
-    replay: async (id) => (id === "dec_test1" ? { decision: decision(), policy_hash: "a".repeat(64), original_policy_hash: "a".repeat(64) } : null),
+    replay: async (id) =>
+      id === "dec_test1" ? { decision: decision(), original: decision(), policy_hash: "a".repeat(64), original_policy_hash: "a".repeat(64), reconstructed: false } : null,
+    trace: async (q) => `TRACE ${q}`,
+    overrides: {
+      grant: async (p, t, m, by) => (granted.push(`${p}/${t}/${m}/${by}`), "GRANTED"),
+      list: () => "No active overrides.",
+      clear: async () => "Cleared 0 override(s).",
+    },
     bot,
   });
   let update = 1;
@@ -56,7 +64,7 @@ function harness(opts: { allowedUserIds?: string[] } = {}) {
   const callback = (data: string, chatId = CHAT, userId = USER) =>
     send({ callback_query: { id: "cb", chat_instance: "x", data, from: { id: userId, is_bot: false, first_name: "Op", username: "op" }, message: { message_id: 1, date: 0, chat: { id: chatId, type: "private" }, text: "t" } } });
   const texts = () => calls.filter((c) => c.method === "sendMessage").map((c) => String(c.payload.text));
-  return { bus, calls, texts, resolved, command, callback };
+  return { bus, calls, texts, resolved, command, callback, granted };
 }
 
 describe("telegram bot", () => {
@@ -109,4 +117,37 @@ describe("telegram bot", () => {
     await h.callback("r:dec_test1", CHAT, 7);
     expect(h.resolved).toEqual([["dec_test1", false, "telegram:op"]]);
   });
+
+  it("sends approval requests with buttons and masked arguments", async () => {
+    const h = harness();
+    await h.bus.publish({ type: "approval.requested", run_id: "r1", decision: decision({ verdict: "REQUIRE_APPROVAL", outcome: undefined }) });
+    const msg = h.calls.find((c) => c.method === "sendMessage")!;
+    const keyboard = (msg.payload.reply_markup as { inline_keyboard: { callback_data: string }[][] }).inline_keyboard[0];
+    expect(keyboard.map((b) => b.callback_data)).toEqual(["a:dec_test1", "r:dec_test1"]);
+    expect(String(msg.payload.text)).not.toContain("ABCPE1234F");
+  });
+
+  it("alerts on a blocked call only once", async () => {
+    const h = harness();
+    h.bus.emitLocal({ type: "decision.made", run_id: "r1", decision: decision() });
+    h.bus.emitLocal({ type: "decision.made", run_id: "r1", decision: decision() });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(h.texts()).toHaveLength(1);
+  });
+
+  it("/trace forwards the query; /override needs a user allow-list and valid input", async () => {
+    const h = harness({ allowedUserIds: [String(USER)] });
+    await h.command("/trace evil.test/page");
+    await h.command("/override research_assistant send_payment 15");
+    await h.command("/override research_assistant send_payment");
+    expect(h.texts()[0]).toBe("TRACE evil.test/page");
+    expect(h.granted).toEqual(["research_assistant/send_payment/15/telegram:" + USER]);
+    expect(h.texts()[2]).toMatch(/Usage/);
+
+    const open = harness();
+    await open.command("/override research_assistant send_payment 15");
+    expect(open.texts()[0]).toMatch(/disabled/);
+    expect(open.granted).toEqual([]);
+  });
 });
+

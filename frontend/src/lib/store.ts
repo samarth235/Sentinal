@@ -1,13 +1,16 @@
 import { useSyncExternalStore } from "react";
 import { io, type Socket } from "socket.io-client";
-import { API_URL } from "./api";
+import { API_URL, getToken } from "./api";
 import type { BusEvent, ContextSegment, Decision, RunSummary, ToolCall } from "./types";
 
 export interface RunState {
   run_id: string;
   scenario_id: string;
   shield: boolean;
-  mode: "live" | "scripted";
+  mode: "live" | "scripted" | "sdk";
+  /** For agent sessions (mode "sdk"): the session title and profile. */
+  title?: string;
+  profile?: string;
   segments: ContextSegment[];
   calls: ToolCall[];
   decisions: Record<string, Decision>;
@@ -56,10 +59,12 @@ function ensureRun(s: State, runId: string): RunState {
 
 /** Pure reducer: all UI state is derived from BusEvents. */
 export function reduce(s: State, e: BusEvent): State {
+  // System events (overrides, notices) are not runs.
+  if (e.run_id === "system" || e.type === "policy.override" || e.type === "system.notice") return s;
   const run = { ...ensureRun(s, e.run_id) };
   switch (e.type) {
     case "run.started":
-      Object.assign(run, { scenario_id: e.scenario_id, shield: e.shield, mode: e.mode });
+      Object.assign(run, { scenario_id: e.scenario_id, shield: e.shield, mode: e.mode, title: e.title, profile: e.profile });
       break;
     case "context.added":
       if (!run.segments.some((x) => x.segment_id === e.segment.segment_id)) run.segments = [...run.segments, e.segment];
@@ -96,10 +101,25 @@ export function reduce(s: State, e: BusEvent): State {
 }
 
 let socket: Socket | null = null;
+type Notice = { level: "info" | "warn" | "error"; text: string };
+const noticeListeners = new Set<(n: Notice) => void>();
 
-export function connect(onDisconnect: (msg: string) => void, onReconnect: () => void) {
+/** Server notices (Telegram delivery failures, audit alerts, policy changes). */
+export function onNotice(fn: (n: Notice) => void): () => void {
+  noticeListeners.add(fn);
+  return () => noticeListeners.delete(fn);
+}
+
+/** Reconnect with the current token (after the user signs in). */
+export function reconnect() {
+  if (!socket) return;
+  socket.auth = { token: getToken() };
+  socket.disconnect().connect();
+}
+
+export function connect(onDisconnect: (msg: string) => void, onReconnect: () => void, onUnauthorized: () => void = () => {}) {
   if (socket) return;
-  socket = io(API_URL, { transports: ["websocket", "polling"], reconnection: true });
+  socket = io(API_URL, { transports: ["websocket", "polling"], reconnection: true, auth: { token: getToken() } });
   let wasConnected = false;
   socket.on("connect", () => {
     if (wasConnected) onReconnect();
@@ -110,8 +130,9 @@ export function connect(onDisconnect: (msg: string) => void, onReconnect: () => 
     set({ ...state, connected: false });
     onDisconnect("Lost connection to Sentinel — reconnecting…");
   });
-  socket.on("connect_error", () => {
+  socket.on("connect_error", (err) => {
     if (state.connected || !wasConnected) set({ ...state, connected: false });
+    if (err?.message === "unauthorized") onUnauthorized();
   });
   // Snapshot = replay of the last 500 events, so a refreshed page recovers its state.
   socket.on("sentinel:snapshot", (events: BusEvent[]) => {
@@ -120,6 +141,11 @@ export function connect(onDisconnect: (msg: string) => void, onReconnect: () => 
     set(s);
   });
   socket.on("sentinel:event", (e: BusEvent) => {
+    if (e.type === "system.notice") noticeListeners.forEach((fn) => fn({ level: e.level, text: e.text }));
+    if (e.type === "policy.override") {
+      const what = e.action === "granted" ? `${e.profile} may use ${e.tool} until ${new Date(e.expires_at ?? "").toLocaleTimeString()}` : e.action === "cleared" ? "all overrides cleared" : `${e.profile} → ${e.tool} expired`;
+      noticeListeners.forEach((fn) => fn({ level: "warn", text: `Policy override: ${what} (${e.by})` }));
+    }
     set(reduce(state, e));
     if (e.type === "run.finished") {
       finishWaiters.get(e.run_id)?.(e.summary);

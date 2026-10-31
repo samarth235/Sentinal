@@ -82,6 +82,21 @@ export class PostgresChainStore implements ChainStore {
     return target.seq;
   }
 
+  async ping(): Promise<void> {
+    await this.init();
+    await this.pool.query("SELECT 1");
+  }
+
+  async head(): Promise<{ seq: number; hash: string } | null> {
+    await this.init();
+    const res = await this.pool.query<{ seq: string; hash: string }>("SELECT seq, hash FROM audit_log ORDER BY seq DESC LIMIT 1");
+    return res.rows[0] ? { seq: Number(res.rows[0].seq), hash: res.rows[0].hash } : null;
+  }
+
+  async close(): Promise<void> {
+    await this.pool.end();
+  }
+
   async setPayload(seq: number, payload: unknown): Promise<void> {
     await this.init();
     await this.pool.query("UPDATE audit_log SET payload = $1 WHERE seq = $2", [JSON.stringify(payload), seq]);
@@ -89,7 +104,8 @@ export class PostgresChainStore implements ChainStore {
 }
 
 export function createPostgresAudit(databaseUrl: string): HashChainAuditSink {
-  const pool = new pg.Pool({ connectionString: databaseUrl, max: 5 });
+  const needsTls = /sslmode=require|neon\.tech|supabase\.co|supabase\.com/.test(databaseUrl) && !/sslmode=disable/.test(databaseUrl);
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 5, ...(needsTls && !/sslmode=/.test(databaseUrl) ? { ssl: { rejectUnauthorized: true } } : {}) });
   pool.on("error", (err) => console.error("[sentinel] postgres pool error:", err.message));
   return new HashChainAuditSink(new PostgresChainStore(pool));
 }

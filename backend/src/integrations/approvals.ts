@@ -43,6 +43,13 @@ export class HttpApprovalProvider implements ApprovalProvider {
     for (const id of [...this.pending.keys()]) this.finish(id, { result: "rejected", approver: "system-reset" });
   }
 
+  /** Time out everything outstanding (shutdown): blocked, fail closed. */
+  expireAll(): number {
+    const ids = [...this.pending.keys()];
+    for (const id of ids) this.finish(id, { result: "timeout" });
+    return ids.length;
+  }
+
   private finish(decisionId: string, result: ApprovalResult): boolean {
     const p = this.pending.get(decisionId);
     if (!p) return false;

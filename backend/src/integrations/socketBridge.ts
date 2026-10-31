@@ -3,6 +3,8 @@ import { Server } from "socket.io";
 import type { BusEvent } from "../types.js";
 import type { SentinelBus } from "./bus.js";
 import { maskDeep } from "./masking.js";
+import type { NamedToken } from "../config.js";
+import { matchToken } from "../http.js";
 
 const RING_SIZE = 500;
 
@@ -12,8 +14,15 @@ const RING_SIZE = 500;
  * account numbers). Masking is length-preserving, so evidence offsets still line up, and it
  * never touches email addresses — the attacker's address in R4 evidence stays visible.
  */
-export function attachSocketBridge(server: HttpServer, bus: SentinelBus, origin: string | string[]) {
+export function attachSocketBridge(server: HttpServer, bus: SentinelBus, origin: string | string[], tokens: NamedToken[] = []) {
   const io = new Server(server, { cors: { origin } });
+  // The live stream carries the same data as the protected REST routes, so it needs the same token.
+  io.use((socket, next) => {
+    if (tokens.length === 0) return next();
+    const given = typeof socket.handshake.auth?.token === "string" ? socket.handshake.auth.token : "";
+    if (matchToken(tokens, given)) return next();
+    next(new Error("unauthorized"));
+  });
   const ring: BusEvent[] = [];
 
   const off = bus.on("event", (event) => {

@@ -28,14 +28,25 @@ export interface UiConfig {
   approval_timeout_seconds: number;
   guard_provider: string;
   telegram: boolean;
+  telegram_mode?: "polling" | "webhook" | null;
+  telegram_error?: string | null;
   auth_required: boolean;
   mode: "demo" | "production";
+  live_mode?: boolean;
+  real_browse?: boolean;
+  policy_version?: string;
+  version?: string;
 }
 
 export interface ReplayResult {
-  decision: Decision;
+  decision: Decision & { reconstructed?: boolean };
   policyHash: string | null;
   originalPolicyHash: string | null;
+}
+
+export interface ForensicsHit {
+  source: { run_id: string; segment_id: string; label?: string; tool?: string; added_at: string; excerpt: string };
+  decisions: { decision_id: string; verdict: string; rule_id: string; outcome?: string; decided_at: string; impact: string; tool: string }[];
 }
 
 export interface OutboxEmail {

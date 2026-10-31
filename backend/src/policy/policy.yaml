@@ -13,12 +13,22 @@ sensitive:
   patterns:
     pan: "[A-Z]{5}[0-9]{4}[A-Z]"
     phone: "(?:\\+91[- ]?)?[6-9][0-9]{9}"
+    aadhaar: "[2-9][0-9]{3}[ -][0-9]{4}[ -][0-9]{4}"
+    card: "(?:4[0-9]{3}|5[1-5][0-9]{2}|3[47][0-9]{2}|6[0-9]{3})(?:[ -]?[0-9]{4}){3}"
 
+# Each tool: impact tier, which args must trace back to the user (provenance_args),
+# which args can carry data out (egress_args), and the trust of its output (result_trust).
+# Tools not built into Sentinel need an args_schema (JSON Schema); see create_ticket below.
 tools:
   browse_url:
     impact: low
     provenance_args: []
     egress_args: [url]              # data must not leak via URL params
+    result_trust: UNTRUSTED
+  read_email:
+    impact: low
+    provenance_args: []
+    result_trust: UNTRUSTED         # inbound email is attacker-controlled content
   query_db:
     impact: medium
     provenance_args: []
@@ -31,6 +41,20 @@ tools:
     impact: critical
     provenance_args: [payee, amount_inr]
     egress_args: [note]
+  create_ticket:                    # example of a tool defined only in policy, no code change
+    impact: medium
+    description: Open a ticket in the support tracker.
+    provenance_args: []
+    egress_args: [title, body]
+    result_trust: TRUSTED
+    args_schema:
+      type: object
+      additionalProperties: false
+      required: [title, body]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 200 }
+        body: { type: string, maxLength: 5000 }
+        priority: { type: string, enum: [low, normal, high] }
 
 profiles:
   research_assistant:
@@ -39,5 +63,9 @@ profiles:
       allowed_fields: [name, city, plan, signup_date, email]
   finance_assistant:
     allowed_tools: [query_db, send_payment]
+    query_db:
+      allowed_fields: [name, plan, account_status]
+  ops_assistant:
+    allowed_tools: [read_email, query_db, send_email, send_payment, create_ticket]
     query_db:
       allowed_fields: [name, plan, account_status]

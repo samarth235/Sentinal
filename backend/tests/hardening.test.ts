@@ -70,6 +70,7 @@ async function serve(token: string) {
   app.use(express.json({ limit: "1kb" }));
   app.post("/api/x", (_req, res) => void res.json({ ok: true }));
   app.get("/api/x", (_req, res) => void res.json({ ok: true }));
+  app.get("/api/health", (_req, res) => void res.json({ ok: true }));
   app.use(errorHandler);
   const server = app.listen(0);
   await new Promise((r) => server.once("listening", r));
@@ -92,14 +93,16 @@ describe("HTTP hardening", () => {
     }
   });
 
-  it("requires the bearer token on POST when configured, leaves GET open", async () => {
+  it("requires the bearer token on every route except health when configured", async () => {
     const s = await serve("s3cret");
     const json = { "content-type": "application/json" };
     try {
       expect((await fetch(s.url, { method: "POST", headers: json, body: "{}" })).status).toBe(401);
       expect((await fetch(s.url, { method: "POST", headers: { ...json, authorization: "Bearer nope" }, body: "{}" })).status).toBe(401);
       expect((await fetch(s.url, { method: "POST", headers: { ...json, authorization: "Bearer s3cret" }, body: "{}" })).status).toBe(200);
-      expect((await fetch(s.url)).status).toBe(200);
+      expect((await fetch(s.url)).status).toBe(401);
+      expect((await fetch(s.url, { headers: { authorization: "Bearer s3cret" } })).status).toBe(200);
+      expect((await fetch(s.url.replace("/api/x", "/api/health"))).status).toBe(200);
     } finally {
       s.close();
     }

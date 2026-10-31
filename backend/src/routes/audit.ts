@@ -4,11 +4,8 @@ import type { HashChainAuditSink } from "../integrations/hashChain.js";
 /** GET /api/audit, GET /api/audit/verify, POST /api/audit/tamper-demo(/restore), GET /api/ui-config */
 export interface UiConfig {
   tamperDemo: boolean;
-  approvalTimeoutSeconds: () => number;
-  guardProvider: string;
-  telegram: boolean;
-  authRequired: boolean;
-  mode: "demo" | "production";
+  /** Everything else the dashboard needs, computed per request (timeouts, telegram health, ...). */
+  extra: () => Record<string, unknown>;
 }
 
 export function auditRoutes(getChain: () => HashChainAuditSink | null, opts: UiConfig): Router {
@@ -35,16 +32,23 @@ export function auditRoutes(getChain: () => HashChainAuditSink | null, opts: UiC
     }
   });
 
-  /** What the dashboard needs to know about this deployment. */
+  /** Newest row: publish this hash somewhere outside the database to make truncation detectable. */
+  router.get("/api/audit/head", async (_req, res, next) => {
+    try {
+      const chain = getChain();
+      if (!chain) return void res.status(503).json({ error: "hash-chained audit not configured" });
+      res.json({ head: await chain.head() });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  /** What the dashboard needs to know about this deployment (no secrets; open route). */
   router.get("/api/ui-config", (_req, res) => {
     res.json({
       audit_store: getChain()?.store.kind ?? null,
       tamper_demo: opts.tamperDemo,
-      approval_timeout_seconds: opts.approvalTimeoutSeconds(),
-      guard_provider: opts.guardProvider,
-      telegram: opts.telegram,
-      auth_required: opts.authRequired,
-      mode: opts.mode,
+      ...opts.extra(),
     });
   });
 

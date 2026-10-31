@@ -1,12 +1,16 @@
-# Full stack: Postgres-backed audit chain, gateway API, dashboard.
-#   API_TOKEN=$(openssl rand -hex 24) docker compose up --build
-# Then open http://localhost:8080 and paste the token into "Set token".
+# Self-hosted Sentinel ("Model B"): Postgres-backed audit chain, gateway API, dashboard.
+#
+#   export API_TOKEN=admin:$(openssl rand -hex 24) AGENT_API_KEYS=my-agent:$(openssl rand -hex 24)
+#   docker compose up -d --build
+#
+# Dashboard http://localhost:8080 (sign in with the part of API_TOKEN after "admin:"), API http://localhost:4000.
+# Strict mode (no shield-off, reset or tamper demo; Groq required): SENTINEL_MODE=production.
 services:
   db:
     image: postgres:17-alpine
     environment:
       POSTGRES_USER: sentinel
-      POSTGRES_PASSWORD: sentinel
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sentinel}
       POSTGRES_DB: sentinel
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -15,6 +19,7 @@ services:
       interval: 2s
       timeout: 3s
       retries: 20
+    restart: unless-stopped
 
   backend:
     build: ./backend
@@ -22,10 +27,11 @@ services:
       db:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgres://sentinel:sentinel@db:5432/sentinel
-      API_TOKEN: ${API_TOKEN:?set API_TOKEN, e.g. API_TOKEN=$(openssl rand -hex 24)}
-      FRONTEND_ORIGIN: http://localhost:8080
-      # Demo affordances stay on unless you opt into strict mode.
+      NODE_ENV: production
+      DATABASE_URL: postgres://sentinel:${POSTGRES_PASSWORD:-sentinel}@db:5432/sentinel
+      API_TOKEN: ${API_TOKEN:?set API_TOKEN, e.g. API_TOKEN=admin:$(openssl rand -hex 24)}
+      AGENT_API_KEYS: ${AGENT_API_KEYS:-}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:8080}
       SENTINEL_MODE: ${SENTINEL_MODE:-demo}
       ENABLE_TAMPER_DEMO: ${ENABLE_TAMPER_DEMO:-false}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -36,16 +42,18 @@ services:
       TELEGRAM_ALLOWED_USER_IDS: ${TELEGRAM_ALLOWED_USER_IDS:-}
     ports:
       - "4000:4000"
+    restart: unless-stopped
 
   frontend:
     build:
       context: ./frontend
       args:
-        VITE_API_URL: http://localhost:4000
+        VITE_API_URL: ${PUBLIC_API_URL:-http://localhost:4000}
     depends_on:
       - backend
     ports:
       - "8080:80"
+    restart: unless-stopped
 
 volumes:
   pgdata:

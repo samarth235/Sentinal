@@ -2,6 +2,7 @@ import { ArrowLeftRight, Check, ChevronDown, KeyRound, Moon, Play, RotateCcw, Sh
 import { useState } from "react";
 import { Popover, Select, Switch, ToggleGroup } from "radix-ui";
 import { getToken, setToken } from "../lib/api";
+import { TraceButton } from "./TraceButton";
 import type { ScenarioInfo, UiConfig } from "../lib/types";
 
 interface Props {
@@ -20,6 +21,9 @@ interface Props {
   onRun: () => void;
   onBeforeAfter: () => void;
   onReset: () => void;
+  customPrompt: string;
+  setCustomPrompt: (v: string) => void;
+  onOpenRun: (runId: string) => void;
 }
 
 function Meta({ label, value }: { label: string; value: string }) {
@@ -131,6 +135,7 @@ export function ControlBar(p: Props) {
               <Meta label="Approvals" value={p.config.telegram ? "Telegram, dashboard" : "Dashboard"} />
             </>
           )}
+          <TraceButton onOpenRun={p.onOpenRun} />
           {p.config?.auth_required && <TokenButton />}
           <span className="inline-flex items-center gap-1.5 text-fg-muted">
             <span className={`h-2 w-2 rounded-full ${p.connected ? "bg-allow-solid" : "bg-deny-solid"}`} />
@@ -173,6 +178,8 @@ export function ControlBar(p: Props) {
               <ToggleGroup.Item
                 key={m}
                 value={m}
+                disabled={m === "live" && p.config?.live_mode === false}
+                title={m === "live" && p.config?.live_mode === false ? "Set ANTHROPIC_API_KEY on the backend to enable live mode" : undefined}
                 className="rounded-[5px] px-3 text-[13px] capitalize text-fg-muted outline-none data-[state=on]:bg-surface data-[state=on]:text-fg data-[state=on]:shadow-sm"
               >
                 {m}
@@ -198,12 +205,32 @@ export function ControlBar(p: Props) {
         </div>
       </div>
 
-      {current && (
-        <p className="truncate border-t border-line bg-canvas px-5 py-2 text-[13px] text-fg-muted">
-          <span className="text-fg-subtle">User prompt · {current.profile}</span>
-          <span className="mx-2 text-line-strong">|</span>
-          {current.user_prompt}
-        </p>
+      {current && p.mode === "live" ? (
+        <div className="flex items-center gap-2 border-t border-line bg-canvas px-5 py-2 text-[13px]">
+          <label htmlFor="custom-prompt" className="shrink-0 text-fg-subtle">
+            Task · {current.profile}
+          </label>
+          <input
+            id="custom-prompt"
+            value={p.customPrompt}
+            onChange={(e) => p.setCustomPrompt(e.target.value)}
+            placeholder={current.user_prompt}
+            className="h-7 min-w-0 flex-1 rounded-md border border-line bg-surface px-2 text-[13px] outline-none focus:border-line-strong"
+          />
+          {p.customPrompt && (
+            <button className="btn btn-ghost btn-sm" onClick={() => p.setCustomPrompt("")}>
+              Use scenario prompt
+            </button>
+          )}
+        </div>
+      ) : (
+        current && (
+          <p className="truncate border-t border-line bg-canvas px-5 py-2 text-[13px] text-fg-muted">
+            <span className="text-fg-subtle">User prompt · {current.profile}</span>
+            <span className="mx-2 text-line-strong">|</span>
+            {current.user_prompt}
+          </p>
+        )
       )}
     </header>
   );
